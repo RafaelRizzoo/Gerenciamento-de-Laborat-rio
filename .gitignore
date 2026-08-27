@@ -1,0 +1,36 @@
+# Ambiente virtual
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+
+# Configuracao local (contem credenciais) - use .env.example como modelo
+.env
+
+# Banco de dados local SQLite
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Arquivos gerados / logs
+*.log
+uploads/
+temp/
+
+# IDE e editores
+.vscode/
+.idea/
+*.swp
+*~
+
+# Sistema operacional
+Thumbs.db
+desktop.ini
+Desktop.ini
+.DS_Store

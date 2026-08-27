@@ -1,0 +1,5 @@
+python-fasthtml>=0.12
+SQLAlchemy>=2.0
+python-dotenv>=1.0
+# Driver do SQL Server (necessario apenas quando DB_ENGINE=mssql)
+pyodbc>=5.1
