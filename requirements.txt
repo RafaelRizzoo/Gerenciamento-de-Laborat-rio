@@ -3,3 +3,5 @@ SQLAlchemy>=2.0
 python-dotenv>=1.0
 # Driver do SQL Server (necessario apenas quando DB_ENGINE=mssql)
 pyodbc>=5.1
+# Leitura da FDS em PDF (extracao automatica dos dados)
+pypdf>=3.17

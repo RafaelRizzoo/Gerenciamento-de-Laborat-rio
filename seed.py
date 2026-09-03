@@ -3,13 +3,24 @@
 Uso:  python seed.py
 """
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
 
 import servicos
 from database import criar_tabelas, db_session
-from models import Aprovacao, Documento, LogAuditoria, Notificacao, Produto, Usuario
+from models import (
+    Aprovacao,
+    ControleOrgao,
+    Documento,
+    LogAuditoria,
+    Notificacao,
+    Produto,
+    ProdutoFabrica,
+    ProdutoRisco,
+    Usuario,
+    somar_meses,
+)
 from security import gerar_hash
 
 SENHA_PADRAO = "tenaris123"
@@ -160,6 +171,91 @@ PRODUTOS = [
 ]
 
 
+# Dados do módulo de FDS, por posição na lista PRODUTOS acima.
+#   _revisao_meses: há quantos meses a FDS foi revisada. Como a validade é de
+#   5 anos (60 meses) com alerta nos últimos 6, os valores abaixo produzem
+#   propositalmente os três estados do semáforo.
+EXTRAS = [
+    {   # 0 - Acetona: vigente (verde), controlada pela Policia Federal
+        "nome_tecnico": "Propan-2-ona",
+        "processo": "Preparação metalográfica",
+        "restricoes_uso": "Manusear somente sob exaustão. Manter longe de fontes de ignição.",
+        "_fabricas": ["Pinda Tubos", "MC SCON2"],
+        "_orgaos": [("POLICIA_FEDERAL", "PF-2024-004821", 20)],
+        "_revisao_meses": 14,
+        "_riscos": ["Inflamável", "Irritante"],
+        "area_solicitante": "Laboratório",
+        "prazo_utilizacao": "Uso contínuo",
+    },
+    {   # 1 - Nital: FDS proxima do vencimento (amarelo) + licenca vencida
+        "nome_tecnico": "Ácido nítrico em etanol",
+        "processo": "Ataque químico - metalografia",
+        "restricoes_uso": "Preparar apenas no volume de uso diário. Não estocar diluído.",
+        "_fabricas": ["Pinda Tubos"],
+        "_orgaos": [("POLICIA_FEDERAL", "PF-2019-001177", -3),
+                    ("EXERCITO", "EB-2023-00912", 15)],
+        "_revisao_meses": 56,
+        "_riscos": ["Inflamável", "Corrosivo", "Tóxico"],
+        "area_solicitante": "Laboratório",
+        "prazo_utilizacao": "Uso contínuo",
+    },
+    {   # 2 - Oleo soluvel: FDS VENCIDA (vermelho), emulsao, 3 fabricas
+        "nome_tecnico": "Óleo mineral emulsionável",
+        "processo": "Usinagem e corte de tubos",
+        "restricoes_uso": "Trocar a emulsão conforme controle microbiológico do laboratório.",
+        "tipo_produto": "Emulsão",
+        "_fabricas": ["Pinda Tubos", "COSE", "RDO"],
+        "_orgaos": [],
+        "_revisao_meses": 68,
+        "_riscos": ["Irritante", "Perigoso ao Meio Ambiente"],
+        "area_solicitante": "Produção",
+        "prazo_utilizacao": "24 meses",
+    },
+    {   # 3 - Desengraxante: em analise
+        "nome_tecnico": "Solução alcalina de hidróxido de potássio",
+        "processo": "Lavagem de peças",
+        "_fabricas": ["MC TCHB"],
+        "_orgaos": [],
+        "_revisao_meses": 6,
+        "_riscos": ["Corrosivo"],
+        "area_solicitante": "Manutenção",
+        "prazo_utilizacao": "12 meses",
+    },
+    {   # 4 - Tinta epoxi: em analise
+        "nome_tecnico": "Resina epóxi bicomponente",
+        "processo": "Pintura de acabamento",
+        "_fabricas": ["MC SCON2", "MC TCHB"],
+        "_orgaos": [],
+        "_revisao_meses": 9,
+        "_riscos": ["Inflamável", "Nocivo"],
+        "area_solicitante": "Produção",
+        "prazo_utilizacao": "18 meses",
+    },
+    {   # 5 - Removedor clorado: reprovado, controlado por Policia Civil
+        "nome_tecnico": "Diclorometano",
+        "processo": "Remoção de tinta",
+        "restricoes_uso": "Uso proibido - reprovado pela área de Saúde e Segurança.",
+        "_fabricas": ["RDO"],
+        "_orgaos": [("POLICIA_CIVIL", "PC-SP-2024-0330", 8)],
+        "_revisao_meses": 30,
+        "_riscos": ["Tóxico", "Perigoso ao Meio Ambiente"],
+        "area_solicitante": "Manutenção",
+        "prazo_utilizacao": "6 meses",
+    },
+    {   # 6 - Inibidor de corrosao: descontinuado, hidraulico
+        "nome_tecnico": "Aminas graxas etoxiladas",
+        "processo": "Tratamento de água de processo",
+        "tipo_produto": "Hidráulico",
+        "_fabricas": ["COSE"],
+        "_orgaos": [],
+        "_revisao_meses": 40,
+        "_riscos": ["Nocivo"],
+        "area_solicitante": "Engenharia",
+        "prazo_utilizacao": "12 meses",
+    },
+]
+
+
 def _pdf_exemplo(titulo: str, produto: dict) -> bytes:
     """Gera um PDF simples de uma página (FDS de exemplo)."""
     linhas = [
@@ -210,7 +306,8 @@ def _pdf_exemplo(titulo: str, produto: dict) -> bytes:
 
 
 def limpar(sessao):
-    for modelo in (Notificacao, LogAuditoria, Documento, Aprovacao, Produto, Usuario):
+    for modelo in (Notificacao, LogAuditoria, Documento, Aprovacao,
+                   ControleOrgao, ProdutoFabrica, ProdutoRisco, Produto, Usuario):
         sessao.query(modelo).delete()
 
 
@@ -249,12 +346,31 @@ def executar(recriar: bool = True):
         for i, dados in enumerate(PRODUTOS):
             marcador = dados.pop("_decisoes")
             dias = dados.pop("_dias")
+
+            extra = dict(EXTRAS[i]) if i < len(EXTRAS) else {}
+            fabricas = extra.pop("_fabricas", [])
+            orgaos = extra.pop("_orgaos", [])
+            revisao_meses = extra.pop("_revisao_meses", 12)
+            riscos = extra.pop("_riscos", [])
+            dados.update(extra)
+            dados["fabricas"] = fabricas
+            dados["riscos"] = riscos
+            dados["controles"] = [
+                {
+                    "orgao": orgao,
+                    "numero_licenca": numero,
+                    "validade_licenca": somar_meses(date.today(), meses),
+                }
+                for orgao, numero, meses in orgaos
+            ]
+
             arquivos = [
                 {
                     "tipo": "FDS",
                     "nome": f"FDS_{dados['nome_comercial'].split()[0].upper()}.pdf",
                     "content_type": "application/pdf",
                     "conteudo": _pdf_exemplo("FICHA DE DADOS DE SEGURANCA (FDS)", dados),
+                    "data_revisao": somar_meses(date.today(), -revisao_meses),
                 }
             ]
             if i % 2 == 0:

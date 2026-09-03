@@ -34,3 +34,22 @@ Thumbs.db
 desktop.ini
 Desktop.ini
 .DS_Store
+
+# ---------------------------------------------------------------
+# Arquivos que NAO pertencem ao projeto
+# ---------------------------------------------------------------
+# O GitHub recusa qualquer arquivo acima de 100 MB, e um push recusado
+# derruba o envio inteiro - inclusive o codigo. Instaladores, videos e
+# paginas salvas do navegador nao entram no repositorio.
+*.exe
+*.msi
+*.iso
+*.zip
+*.rar
+*.7z
+*.mp4
+*.mov
+
+# Paginas salvas do navegador (geram uma pasta _files com centenas de arquivos)
+*_files/
+Instagram.html

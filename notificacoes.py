@@ -93,6 +93,68 @@ def notificar_decisao(sessao, produto: Produto, etapa: str, decisao: str, parece
     notificar(sessao, produto.solicitante.email, assunto, corpo, produto.id)
 
 
+def notificar_correcao(sessao, produto: Produto, etapa: str, motivo: str):
+    """Avisa o solicitante de que a solicitação voltou para correção."""
+    rotulo = dict(FLUXO_APROVACAO).get(etapa, etapa)
+    assunto = (
+        f"[Produtos Químicos] Correção solicitada - {produto.nome_comercial}"
+    )
+    corpo = (
+        f"Olá {produto.solicitante.nome},\n\n"
+        f"A área de {rotulo} solicitou uma correção na solicitação do produto "
+        f"{produto.nome_comercial} ({produto.codigo_interno}) antes de dar o parecer.\n\n"
+        f"O que precisa ser corrigido:\n{motivo}\n\n"
+        f"A solicitação NÃO foi reprovada. Depois de corrigir, reenvie pelo sistema: "
+        f"a análise retoma com {rotulo}, e as etapas já aprovadas continuam valendo.\n\n"
+        f"Acesse: {_url_produto(produto)}\n\n"
+        f"-- {config.APP_EMPRESA} | {config.APP_NOME}"
+    )
+    notificar(sessao, produto.solicitante.email, assunto, corpo, produto.id)
+
+
+def notificar_reenvio(sessao, produto: Produto, etapa: str, resposta: str):
+    """Avisa os responsáveis pela etapa de que a correção foi reenviada."""
+    rotulo = dict(FLUXO_APROVACAO).get(etapa, etapa)
+    responsaveis = (
+        sessao.query(Usuario).filter(Usuario.papel == etapa, Usuario.ativo.is_(True)).all()
+    )
+    assunto = f"[Produtos Químicos] Correção reenviada - {produto.nome_comercial}"
+    for usuario in responsaveis:
+        corpo = (
+            f"Olá {usuario.nome},\n\n"
+            f"{produto.solicitante.nome} reenviou a solicitação do produto "
+            f"{produto.nome_comercial} ({produto.codigo_interno}) após a correção "
+            f"pedida por {rotulo}.\n\n"
+            f"Observação do solicitante: {resposta or '(sem observação)'}\n\n"
+            f"A análise está de volta com você: {_url_produto(produto)}\n\n"
+            f"-- {config.APP_EMPRESA} | {config.APP_NOME}"
+        )
+        notificar(sessao, usuario.email, assunto, corpo, produto.id)
+
+
+def notificar_documento(sessao, produto: Produto, nome_arquivo: str, tipo_label: str):
+    """Avisa a etapa atual de que a documentação do produto foi atualizada."""
+    etapa = produto.etapa_atual
+    if not etapa:
+        return
+    rotulo = dict(FLUXO_APROVACAO).get(etapa, etapa)
+    responsaveis = (
+        sessao.query(Usuario).filter(Usuario.papel == etapa, Usuario.ativo.is_(True)).all()
+    )
+    assunto = f"[Produtos Químicos] Documentação atualizada - {produto.nome_comercial}"
+    for usuario in responsaveis:
+        corpo = (
+            f"Olá {usuario.nome},\n\n"
+            f"Um novo documento foi anexado à solicitação do produto "
+            f"{produto.nome_comercial} ({produto.codigo_interno}), que está "
+            f"na etapa de {rotulo}.\n\n"
+            f"Documento: {tipo_label} - {nome_arquivo}\n\n"
+            f"Consulte antes de dar o parecer: {_url_produto(produto)}\n\n"
+            f"-- {config.APP_EMPRESA} | {config.APP_NOME}"
+        )
+        notificar(sessao, usuario.email, assunto, corpo, produto.id)
+
+
 def notificar_conclusao(sessao, produto: Produto):
     """Avisa o solicitante que o fluxo terminou."""
     assunto = (

@@ -47,6 +47,41 @@ Depois abrir no navegador: **http://127.0.0.1:5001**
 Para testar o fluxo completo: entre como **Ana**, cadastre um produto, depois entre
 como Bruno → Carla → Diego → Eduardo e aprove cada etapa.
 
+Para testar a parte pública, basta **não entrar** (ou clicar em *Sair*) e navegar
+pela página inicial.
+
+---
+
+## 1.1 Modelo de acesso (site público na rede interna)
+
+O sistema é **aberto para qualquer pessoa da rede interna**, sem login. A
+identificação só é exigida onde alguém precisa assinar o que fez.
+
+| Área | Acesso |
+|---|---|
+| Página inicial, busca, `/produtos`, `/classificacao`, `/fds`, `/historico` | **Aberto** — sem login |
+| Download de FDS e Ficha de Emergência de produtos aprovados | **Aberto** |
+| Ficha completa de produto aprovado | **Aberto** |
+| Nova solicitação (`/solicitacoes/nova`) | Exige login |
+| Registrar parecer / aprovar etapa | Exige login + ser o responsável da etapa |
+| Aprovações pendentes, Minhas solicitações, Painel | Exige login |
+| Descontinuar / reativar produto | Exige login + Químico Responsável, Aprovador Final ou Admin |
+| Usuários e papéis (`/usuarios`) | Exige login + Admin |
+
+O que o visitante **sem login** não vê: solicitações em análise, reprovadas e
+descontinuadas; pareceres em aberto; log de alterações do produto; e-mail do
+solicitante; e documentos que não sejam FDS ou Ficha de Emergência.
+
+A barra superior contém apenas a marca e o nome do sistema. A navegação é feita
+pelos cartões da página inicial; quem está logado ganha uma faixa fina com
+atalhos e o botão *Sair*.
+
+### Imagem de fundo do hero
+
+Fica em `static/img/hero.jpg` — hoje é um gradiente provisório. Para trocar,
+substitua o arquivo por uma imagem de **2560 × 720 px** (JPG, até ~400 KB), com o
+terço esquerdo escuro e sem detalhe, porque o texto branco fica sobre ele.
+
 ---
 
 ## 2. O que já está implementado
@@ -56,8 +91,9 @@ como Bruno → Carla → Diego → Eduardo e aprove cada etapa.
   Responsável → Aprovador Final, cada uma com parecer registrado
 - **Controle de status**: Em análise, Aprovado, Reprovado, Descontinuado
 - **Notificações por e-mail** em cada etapa (com caixa de saída quando não há SMTP)
-- **Portal de consulta aberto** (`/portal`) — sem login, apenas produtos aprovados
-- **Consulta e download de FDS** (`/fds` interno e `/portal/fds` público)
+- **Site público na rede interna** — consulta e FDS sem login (ver seção 1.1)
+- **Consulta e download de FDS** (`/fds`), com regra pública de visibilidade
+- **Consulta de classificação de perigo** (`/classificacao`) — GHS, ONU e EPI
 - **Dashboard** com indicadores, produtos por categoria e pendências por etapa
 - **Histórico completo** e **log de auditoria** de todas as ações
 - **Cadastro de usuários e papéis**
@@ -67,7 +103,7 @@ como Bruno → Carla → Diego → Eduardo e aprove cada etapa.
 
 | Arquivo | Papel |
 |---|---|
-| `main.py` | Aplicação FastHTML: todas as rotas e telas |
+| `main.py` | Aplicação FastHTML: todas as rotas, telas e regras de acesso |
 | `models.py` | Modelo de dados (tabelas, status, categorias, papéis) |
 | `database.py` | Conexão com o banco e criação das tabelas |
 | `servicos.py` | Regras de negócio: fluxo de aprovação, indicadores, buscas |
@@ -76,6 +112,7 @@ como Bruno → Carla → Diego → Eduardo e aprove cada etapa.
 | `security.py` | Hash de senha (PBKDF2-SHA256) |
 | `seed.py` | Dados de exemplo para testes |
 | `static/styles.css` | Identidade visual Tenaris |
+| `static/img/hero.jpg` | Imagem de fundo da página inicial (substituível) |
 | `config.py` / `.env` | Configuração (banco, SMTP, uploads) |
 
 ### Paleta aplicada (cores oficiais Tenaris)
