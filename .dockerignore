@@ -1,0 +1,19 @@
+# Ambiente local que não deve entrar na imagem
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.gitattributes
+
+# Banco e segredos locais: ficam no volume / nas variáveis do compose
+*.db
+*.db-journal
+.env
+.sesskey
+servidor.log
+
+# Documentação e arquivos de trabalho
+GIT_SETUP.md
+*.zip

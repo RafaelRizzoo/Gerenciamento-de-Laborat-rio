@@ -10,7 +10,7 @@ Regras de navegacao adotadas:
 from fasthtml.common import *  # noqa: F403
 
 import config
-from models import FLUXO_APROVACAO, STATUS
+from models import AREAS_APROVACAO, ETAPA_FINAL, FLUXO_APROVACAO, STATUS
 
 
 # ------------------------------------------------------- Cache do CSS
@@ -282,18 +282,21 @@ def alerta(mensagem, tipo: str = "info"):
 
 
 def passos(produto):
-    """Mini indicador visual do andamento das etapas."""
+    """Mini indicador do andamento: um traço por área, sem ordem."""
     itens = []
     for ap in produto.aprovacoes:
         if ap.decisao == "APROVADO":
             classe = "ok"
         elif ap.decisao == "REPROVADO":
             classe = "recusado"
-        elif produto.etapa_atual == ap.etapa and produto.status == "EM_ANALISE":
+        elif produto.aguarda(ap.etapa):
             classe = "atual"
         else:
             classe = ""
-        itens.append(I(cls=classe or None, title=f"{ap.etapa_label}: {ap.decisao.title()}"))
+        situacao = {"APROVADO": "aprovado", "REPROVADO": "reprovado"}.get(
+            ap.decisao, "aguardando" if classe == "atual" else "não iniciada"
+        )
+        itens.append(I(cls=classe or None, title=f"{ap.etapa_label}: {situacao}"))
     if not itens:
         itens = [I() for _ in FLUXO_APROVACAO]
     return Span(*itens, cls="passos")
@@ -371,34 +374,64 @@ def barras(dados: list[tuple[str, int]], cor_por_indice: bool = True):
     return Div(*linhas, cls="barras")
 
 
+def _parecer_area(ap, produto, mostrar_parecer: bool = True):
+    """Cartão com a situação de uma área (sem número de ordem)."""
+    if ap.decisao == "APROVADO":
+        classe, sinal, situacao = "aprovado", "✓", "Aprovado"
+    elif ap.decisao == "REPROVADO":
+        classe, sinal, situacao = "reprovado", "✕", "Reprovado"
+    elif produto.aguarda(ap.etapa):
+        classe, sinal, situacao = "atual", "•", "Aguardando análise"
+    else:
+        classe, sinal, situacao = "", "•", (
+            "Aguarda as demais áreas" if ap.etapa == ETAPA_FINAL else "Não iniciada"
+        )
+
+    if ap.decisao == "PENDENTE":
+        meta = situacao
+    else:
+        quem = ap.aprovador.nome if ap.aprovador else "-"
+        quando = ap.decidido_em.strftime("%d/%m/%Y %H:%M") if ap.decidido_em else "-"
+        meta = f"{situacao} por {quem} em {quando}"
+
+    return Div(
+        Div(sinal, cls="marcador"),
+        Div(
+            Div(ap.etapa_label, cls="etapa"),
+            Div(meta, cls="meta"),
+            Div(ap.parecer, cls="parecer") if (ap.parecer and mostrar_parecer) else None,
+            cls="txt",
+        ),
+        cls=f"area-parecer {classe}".strip(),
+    )
+
+
 def linha_fluxo(produto, mostrar_parecer: bool = True):
-    """Timeline das etapas de aprovacao."""
-    itens = []
-    for ap in produto.aprovacoes:
-        if ap.decisao == "APROVADO":
-            classe, sinal = "aprovado", "✓"
-        elif ap.decisao == "REPROVADO":
-            classe, sinal = "reprovado", "✕"
-        elif produto.etapa_atual == ap.etapa and produto.status == "EM_ANALISE":
-            classe, sinal = "atual", str(ap.ordem)
-        else:
-            classe, sinal = "", str(ap.ordem)
-        if ap.decisao == "PENDENTE":
-            meta = "Aguardando análise" if classe == "atual" else "Não iniciada"
-        else:
-            quem = ap.aprovador.nome if ap.aprovador else "-"
-            quando = ap.decidido_em.strftime("%d/%m/%Y %H:%M") if ap.decidido_em else "-"
-            meta = f"{ap.decisao.title()} por {quem} em {quando}"
-        itens.append(
-            Li(
-                Div(sinal, cls="marcador"),
-                Div(ap.etapa_label, cls="etapa"),
-                Div(meta, cls="meta"),
-                Div(ap.parecer, cls="parecer") if (ap.parecer and mostrar_parecer) else None,
-                cls=classe or None,
+    """Pareceres por área.
+
+    Não existe ordem entre Meio Ambiente, Saúde, Segurança e Químico
+    Responsável: as quatro analisam ao mesmo tempo. O Aprovador Final é o
+    único passo fixo e aparece destacado, depois das áreas.
+    """
+    por_etapa = {ap.etapa: ap for ap in produto.aprovacoes}
+    areas = [por_etapa[chave] for chave, _ in AREAS_APROVACAO if chave in por_etapa]
+    final = por_etapa.get(ETAPA_FINAL)
+
+    blocos = [
+        Div(
+            *[_parecer_area(ap, produto, mostrar_parecer) for ap in areas],
+            cls="areas-parecer",
+        )
+    ]
+    if final is not None:
+        blocos.append(
+            Div(
+                Span("Depois das áreas", cls="rotulo-final"),
+                _parecer_area(final, produto, mostrar_parecer),
+                cls="bloco-final",
             )
         )
-    return Ul(*itens, cls="fluxo")
+    return Div(*blocos, cls="pareceres")
 
 
 def cartao_documento(doc, prefixo: str = ""):

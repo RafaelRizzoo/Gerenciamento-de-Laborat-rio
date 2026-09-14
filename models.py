@@ -5,6 +5,7 @@ Escrito em SQLAlchemy 2.0 com tipos compatíveis tanto com SQLite
 """
 
 import calendar
+import unicodedata
 from datetime import date, datetime
 
 from sqlalchemy import (
@@ -42,19 +43,35 @@ def somar_meses(d: date, meses: int) -> date:
 PAPEIS = {
     "SOLICITANTE": "Solicitante",
     "MEIO_AMBIENTE": "Meio Ambiente",
-    "SAUDE_SEGURANCA": "Saúde e Segurança",
+    "SAUDE": "Saúde",
+    "SEGURANCA": "Segurança",
     "QUIMICO_RESPONSAVEL": "Químico Responsável",
     "APROVADOR_FINAL": "Aprovador Final",
     "ADMIN": "Administrador",
 }
 
-# Ordem oficial do fluxo de aprovacao
-FLUXO_APROVACAO = [
+# ---------------------------------------------------------------------
+# Fluxo de aprovação
+# ---------------------------------------------------------------------
+# NÃO existe ordem entre as áreas: Meio Ambiente, Saúde, Segurança e
+# Químico Responsável recebem a solicitação ao mesmo tempo e analisam na
+# ordem que quiserem. O Aprovador Final é o único passo fixo: só é
+# acionado quando as quatro áreas tiverem concluído.
+
+AREAS_APROVACAO = [
     ("MEIO_AMBIENTE", "Meio Ambiente"),
-    ("SAUDE_SEGURANCA", "Saúde e Segurança"),
+    ("SAUDE", "Saúde"),
+    ("SEGURANCA", "Segurança"),
     ("QUIMICO_RESPONSAVEL", "Químico Responsável"),
-    ("APROVADOR_FINAL", "Aprovador Final"),
 ]
+
+ETAPA_FINAL = "APROVADOR_FINAL"
+
+# Lista completa (áreas + etapa final). Serve para rótulos e consultas.
+FLUXO_APROVACAO = AREAS_APROVACAO + [(ETAPA_FINAL, "Aprovador Final")]
+
+# Papéis que participam de alguma etapa de aprovação.
+PAPEIS_APROVADORES = [chave for chave, _ in FLUXO_APROVACAO]
 
 STATUS = {
     "RASCUNHO": "Rascunho",
@@ -251,6 +268,8 @@ class Produto(Base):
     motivo_encerramento: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
     # O que o aprovador pediu para corrigir (limpo quando o solicitante reenvia).
     pendencia: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
+    # Última vez que o sistema cobrou os aprovadores pendentes por e-mail.
+    ultimo_lembrete_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     solicitante: Mapped["Usuario"] = relationship(lazy="joined")
     aprovacoes: Mapped[list["Aprovacao"]] = relationship(
@@ -290,7 +309,45 @@ class Produto(Base):
 
     @property
     def etapa_label(self) -> str | None:
-        return dict(FLUXO_APROVACAO).get(self.etapa_atual) if self.etapa_atual else None
+        """Texto curto de quem a solicitação está esperando."""
+        if not self.aberta:
+            return None
+        pendentes = self.areas_pendentes
+        if not pendentes:
+            return None
+        if pendentes == [ETAPA_FINAL]:
+            return "Aprovador Final"
+        nomes = [dict(FLUXO_APROVACAO).get(e, e) for e in pendentes if e != ETAPA_FINAL]
+        if len(nomes) == 1:
+            return nomes[0]
+        return f"{len(nomes)} áreas"
+
+    @property
+    def areas_pendentes(self) -> list[str]:
+        """Etapas que ainda não registraram parecer."""
+        return [a.etapa for a in self.aprovacoes if a.decisao == "PENDENTE"]
+
+    @property
+    def areas_pendentes_labels(self) -> list[str]:
+        return [dict(FLUXO_APROVACAO).get(e, e) for e in self.areas_pendentes]
+
+    @property
+    def areas_concluidas(self) -> bool:
+        """Todas as áreas (menos o Aprovador Final) já decidiram?"""
+        return not [e for e in self.areas_pendentes if e != ETAPA_FINAL]
+
+    def aguarda(self, area: str) -> bool:
+        """A solicitação depende do parecer desta área AGORA?
+
+        As áreas analisam em paralelo; o Aprovador Final só entra quando
+        todas as demais tiverem concluído.
+        """
+        if self.status not in STATUS_ABERTOS:
+            return False
+        pendentes = self.areas_pendentes
+        if area == ETAPA_FINAL:
+            return ETAPA_FINAL in pendentes and self.areas_concluidas
+        return area in pendentes
 
     @property
     def aberta(self) -> bool:
@@ -475,6 +532,30 @@ class Aprovacao(Base):
         return dict(FLUXO_APROVACAO).get(self.etapa, self.etapa)
 
 
+class AreaAprovador(Base):
+    """Quem aprova por cada área.
+
+    Substitui a regra antiga de "um papel = um aprovador": a área pode ter
+    várias pessoas e a lista é mantida pela tela de Aprovações, sem mexer
+    no código. Basta UMA delas registrar o parecer para a área concluir.
+    """
+
+    __tablename__ = "area_aprovadores"
+    __table_args__ = (UniqueConstraint("area", "usuario_id", name="uq_area_usuario"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    area: Mapped[str] = mapped_column(Unicode(40), nullable=False)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"), nullable=False)
+    ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    usuario: Mapped["Usuario"] = relationship(lazy="joined")
+
+    @property
+    def area_label(self) -> str:
+        return dict(FLUXO_APROVACAO).get(self.area, self.area)
+
+
 class Documento(Base):
     """Arquivo anexado ao produto. O conteudo fica no próprio banco."""
 
@@ -565,3 +646,240 @@ class Notificacao(Base):
     criado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     produto: Mapped["Produto | None"] = relationship(lazy="joined")
+
+
+# =====================================================================
+# Módulo Recursos e Documentos (biblioteca digital)
+# =====================================================================
+
+# Seções da biblioteca. A ordem aqui é a ordem exibida na tela.
+SECOES_RECURSO = {
+    "ETIQUETAS": "Etiquetas e identificação",
+    "PROCEDIMENTOS": "Procedimentos e políticas",
+    "FORMULARIOS": "Formulários e modelos",
+    "NORMAS": "Normas e legislações",
+    "TREINAMENTOS": "Materiais de treinamento",
+    "LINKS": "Links úteis",
+}
+
+DESCRICAO_SECAO = {
+    "ETIQUETAS": "Modelos padronizados de etiquetas GHS, armazenamento, "
+                 "recipientes, resíduos perigosos e produtos controlados.",
+    "PROCEDIMENTOS": "Procedimentos de manuseio, políticas de HSE e "
+                     "instruções de trabalho da planta.",
+    "FORMULARIOS": "Formulários e planilhas em branco para preenchimento "
+                   "(requisições, checklists, inspeções).",
+    "NORMAS": "Normas internas, legislação ambiental, requisitos de saúde, "
+              "segurança, armazenamento e transporte.",
+    "TREINAMENTOS": "Apresentações, guias rápidos, manuais do sistema, "
+                    "vídeos e cartilhas de boas práticas.",
+    "LINKS": "Atalhos para SharePoint HSE, Power BI, sistemas corporativos "
+             "e sites de órgãos reguladores.",
+}
+
+ICONE_SECAO = {
+    "ETIQUETAS": "▤",
+    "PROCEDIMENTOS": "▣",
+    "FORMULARIOS": "▦",
+    "NORMAS": "§",
+    "TREINAMENTOS": "▷",
+    "LINKS": "↗",
+}
+
+TIPOS_MIDIA = {
+    "ARQUIVO": "Arquivo para download",
+    "LINK": "Link externo",
+}
+
+# Agrupamento das extensões usado no filtro "tipo de arquivo".
+GRUPOS_ARQUIVO = {
+    "PDF": ("pdf",),
+    "WORD": ("doc", "docx", "rtf", "odt"),
+    "EXCEL": ("xls", "xlsx", "xlsm", "csv", "ods"),
+    "APRESENTACAO": ("ppt", "pptx", "odp"),
+    "IMAGEM": ("png", "jpg", "jpeg", "gif", "bmp", "svg", "webp"),
+    "VIDEO": ("mp4", "avi", "mkv", "mov", "wmv"),
+    "COMPACTADO": ("zip", "rar", "7z"),
+}
+
+ROTULOS_GRUPO_ARQUIVO = {
+    "PDF": "PDF",
+    "WORD": "Word",
+    "EXCEL": "Excel / planilha",
+    "APRESENTACAO": "Apresentação",
+    "IMAGEM": "Imagem",
+    "VIDEO": "Vídeo",
+    "COMPACTADO": "Arquivo compactado",
+    "LINK": "Link externo",
+    "OUTRO": "Outro formato",
+}
+
+
+def sem_acento(texto: str | None) -> str:
+    """Texto em minúsculas e sem acentos, para a busca não depender de acentuação."""
+    if not texto:
+        return ""
+    normalizado = unicodedata.normalize("NFKD", texto)
+    return "".join(c for c in normalizado if not unicodedata.combining(c)).lower()
+
+
+def grupo_do_arquivo(nome_arquivo: str | None) -> str:
+    """Classifica o arquivo pela extensão (PDF, WORD, EXCEL, ...)."""
+    if not nome_arquivo or "." not in nome_arquivo:
+        return "OUTRO"
+    ext = nome_arquivo.rsplit(".", 1)[-1].strip().lower()
+    for grupo, extensoes in GRUPOS_ARQUIVO.items():
+        if ext in extensoes:
+            return grupo
+    return "OUTRO"
+
+
+def _legivel(tamanho: int | None) -> str:
+    tam = float(tamanho or 0)
+    for unidade in ("B", "KB", "MB", "GB"):
+        if tam < 1024 or unidade == "GB":
+            return f"{tam:.0f} {unidade}" if unidade == "B" else f"{tam:.1f} {unidade}"
+        tam /= 1024
+    return f"{tam:.1f} GB"
+
+
+class Recurso(Base):
+    """Um item da biblioteca: documento, modelo, norma, treinamento ou link.
+
+    O arquivo em si fica em `RecursoArquivo`, uma linha por versão, de modo
+    que a revisão anterior continua disponível para consulta e auditoria.
+    """
+
+    __tablename__ = "recursos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    secao: Mapped[str] = mapped_column(Unicode(30), nullable=False, default="PROCEDIMENTOS")
+    titulo: Mapped[str] = mapped_column(Unicode(200), nullable=False)
+    codigo: Mapped[str | None] = mapped_column(Unicode(60), nullable=True)
+    descricao: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
+    palavras_chave: Mapped[str | None] = mapped_column(Unicode(400), nullable=True)
+
+    tipo_midia: Mapped[str] = mapped_column(Unicode(20), nullable=False, default="ARQUIVO")
+    url: Mapped[str | None] = mapped_column(Unicode(600), nullable=True)
+
+    versao_atual: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    data_revisao: Mapped[date | None] = mapped_column(Date, nullable=True)
+    proxima_revisao: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    responsavel_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id"), nullable=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    atualizado_em: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, onupdate=datetime.now
+    )
+    ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    downloads: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    responsavel: Mapped["Usuario | None"] = relationship(lazy="joined")
+    arquivos: Mapped[list["RecursoArquivo"]] = relationship(
+        back_populates="recurso",
+        cascade="all, delete-orphan",
+        order_by="desc(RecursoArquivo.versao)",
+        lazy="selectin",
+    )
+
+    # ------------------------------------------------------------ rótulos
+    @property
+    def secao_label(self) -> str:
+        return SECOES_RECURSO.get(self.secao, self.secao)
+
+    @property
+    def icone(self) -> str:
+        return ICONE_SECAO.get(self.secao, "▣")
+
+    @property
+    def e_link(self) -> bool:
+        return self.tipo_midia == "LINK"
+
+    @property
+    def arquivo_atual(self) -> "RecursoArquivo | None":
+        """Versão mais recente do arquivo (a lista já vem ordenada)."""
+        return self.arquivos[0] if self.arquivos else None
+
+    @property
+    def versoes_anteriores(self) -> list["RecursoArquivo"]:
+        return list(self.arquivos[1:])
+
+    @property
+    def grupo_arquivo(self) -> str:
+        if self.e_link:
+            return "LINK"
+        atual = self.arquivo_atual
+        return grupo_do_arquivo(atual.nome_arquivo) if atual else "OUTRO"
+
+    @property
+    def grupo_label(self) -> str:
+        return ROTULOS_GRUPO_ARQUIVO.get(self.grupo_arquivo, self.grupo_arquivo)
+
+    @property
+    def extensao(self) -> str:
+        if self.e_link:
+            return "LINK"
+        atual = self.arquivo_atual
+        if not atual or "." not in atual.nome_arquivo:
+            return "DOC"
+        return atual.nome_arquivo.rsplit(".", 1)[-1].upper()[:4]
+
+    @property
+    def tamanho_legivel(self) -> str:
+        atual = self.arquivo_atual
+        return _legivel(atual.tamanho) if atual else "-"
+
+    @property
+    def destino(self) -> str:
+        """Para onde o botão 'Abrir' aponta."""
+        return self.url if self.e_link else f"/recursos/{self.id}/arquivo"
+
+    @property
+    def data_referencia(self) -> date:
+        """Data usada nas ordenações e no filtro por período."""
+        if self.data_revisao:
+            return self.data_revisao
+        return (self.atualizado_em or self.criado_em or datetime.now()).date()
+
+    @property
+    def revisao_vencida(self) -> bool:
+        return bool(self.proxima_revisao and self.proxima_revisao < date.today())
+
+    def texto_busca(self) -> str:
+        partes = [self.titulo, self.codigo or "", self.descricao or "",
+                  self.palavras_chave or "", self.secao_label]
+        atual = self.arquivo_atual
+        if atual:
+            partes.append(atual.nome_arquivo)
+        return sem_acento(" ".join(partes))
+
+
+class RecursoArquivo(Base):
+    """Uma versão do arquivo de um recurso. O conteúdo fica no banco."""
+
+    __tablename__ = "recurso_arquivos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    recurso_id: Mapped[int] = mapped_column(ForeignKey("recursos.id"), nullable=False)
+    versao: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    nome_arquivo: Mapped[str] = mapped_column(Unicode(255), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(Unicode(120), nullable=True)
+    tamanho: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    conteudo: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    data_revisao: Mapped[date | None] = mapped_column(Date, nullable=True)
+    notas: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
+    enviado_por_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id"), nullable=True)
+    enviado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    recurso: Mapped["Recurso"] = relationship(back_populates="arquivos")
+    enviado_por: Mapped["Usuario | None"] = relationship(lazy="joined")
+
+    @property
+    def tamanho_legivel(self) -> str:
+        return _legivel(self.tamanho)
+
+    @property
+    def extensao(self) -> str:
+        if "." not in self.nome_arquivo:
+            return "DOC"
+        return self.nome_arquivo.rsplit(".", 1)[-1].upper()[:4]

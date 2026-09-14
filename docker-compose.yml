@@ -1,0 +1,70 @@
+# =====================================================================
+#  Gestão de Produtos Químicos - Tenaris
+#  Subir tudo:      docker compose up -d
+#  Ver o que houve: docker compose logs -f
+#  Parar:           docker compose down
+# =====================================================================
+services:
+  app:
+    build:
+      context: .
+      # Para usar SQL Server em vez de SQLite, troque para "1"
+      args:
+        SQLSERVER: "0"
+    image: gestao-quimicos:latest
+    container_name: gestao-quimicos
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    environment:
+      # --- banco ------------------------------------------------------
+      DB_ENGINE: sqlite
+      SQLITE_PATH: /dados/gestao_quimicos.db
+
+      # --- sessão -----------------------------------------------------
+      # Troque por uma frase qualquer, só sua. Mudar isso desloga todo mundo.
+      SECRET_KEY: troque-esta-chave-antes-de-usar-de-verdade
+
+      # --- e-mail (SMTP) ---------------------------------------------
+      # Vazio = os e-mails ficam registrados em /notificacoes, sem sair.
+      SMTP_HOST: ""
+      SMTP_PORT: "587"
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+      SMTP_TLS: "1"
+      SMTP_FROM: gestao.quimicos@tenaris.com
+
+      # --- lembretes automáticos -------------------------------------
+      LEMBRETES_ATIVOS: "1"
+      LEMBRETE_DIAS: "7"
+
+      # --- upload -----------------------------------------------------
+      MAX_UPLOAD_MB: "20"
+
+      TZ: America/Sao_Paulo
+    volumes:
+      # O banco vive aqui: apagar o contêiner NÃO apaga os dados.
+      - dados:/dados
+
+volumes:
+  dados:
+
+# ---------------------------------------------------------------------
+# Quiser rodar com SQL Server de verdade? Descomente o bloco abaixo,
+# troque SQLSERVER para "1" no build e ajuste as variáveis do app:
+#   DB_ENGINE: mssql
+#   MSSQL_HOST: sqlserver
+#   MSSQL_DATABASE: GestaoQuimicos
+#   MSSQL_USER: sa
+#   MSSQL_PASSWORD: SuaSenhaF0rte!
+#
+#  sqlserver:
+#    image: mcr.microsoft.com/mssql/server:2022-latest
+#    environment:
+#      ACCEPT_EULA: "Y"
+#      MSSQL_SA_PASSWORD: SuaSenhaF0rte!
+#    ports:
+#      - "1433:1433"
+#    volumes:
+#      - sqlserver:/var/opt/mssql
+# ---------------------------------------------------------------------

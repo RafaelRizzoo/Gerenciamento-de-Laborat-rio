@@ -1,16 +1,21 @@
 """Regras de negócio: criação de solicitacoes, fluxo de aprovacao e auditoria."""
 
-from datetime import date, datetime, time
+import secrets
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import func, select
 
 import notificacoes
+from security import gerar_hash
 from models import (
+    AREAS_APROVACAO,
+    ETAPA_FINAL,
     FLUXO_APROVACAO,
     ORGAOS_CONTROLADORES,
     STATUS,
     STATUS_ABERTOS,
     Aprovacao,
+    AreaAprovador,
     ControleOrgao,
     Documento,
     LogAuditoria,
@@ -83,7 +88,7 @@ def criar_solicitacao(sessao, dados: dict, solicitante: Usuario, arquivos: list[
         restricoes_uso=dados.get("restricoes_uso"),
         observacoes=dados.get("observacoes"),
         status="PENDENTE",
-        etapa_atual=FLUXO_APROVACAO[0][0],
+        etapa_atual=None,
         solicitante_id=solicitante.id,
     )
     sessao.add(produto)
@@ -122,8 +127,40 @@ def criar_solicitacao(sessao, dados: dict, solicitante: Usuario, arquivos: list[
         status_novo="PENDENTE",
     )
     sessao.refresh(produto)
-    notificacoes.notificar_etapa_pendente(sessao, produto, produto.etapa_atual)
+    notificacoes.notificar_envio(sessao, produto)
     return produto
+
+
+def obter_ou_criar_solicitante(sessao, nome: str | None, email: str | None) -> Usuario:
+    """Solicitante de um cadastro feito sem login.
+
+    Se o e-mail já existe, reaproveita a pessoa; senão cria um usuário
+    Solicitante com senha aleatória (ele não precisa de login para
+    cadastrar, mas passa a receber os avisos do fluxo).
+    """
+    email = (email or "").strip().lower()
+    nome = (nome or "").strip() or (email.split("@")[0] if email else "Solicitante")
+    usuario = sessao.scalar(select(Usuario).where(Usuario.email == email)) if email else None
+    if usuario:
+        if not usuario.nome:
+            usuario.nome = nome
+        return usuario
+    usuario = Usuario(
+        nome=nome,
+        email=email or f"solicitante{int(datetime.now().timestamp())}@local",
+        senha_hash=gerar_hash(secrets.token_urlsafe(16)),
+        papel="SOLICITANTE",
+        ativo=True,
+    )
+    sessao.add(usuario)
+    sessao.flush()
+    registrar_log(
+        sessao,
+        "SOLICITANTE_REGISTRADO",
+        f"{usuario.nome} <{usuario.email}> cadastrado ao enviar uma solicitação sem login.",
+        usuario.id,
+    )
+    return usuario
 
 
 def aplicar_fabricas(sessao, produto: Produto, fabricas: list[str]) -> None:
@@ -249,15 +286,43 @@ def atualizar_ficha(sessao, produto: Produto, dados: dict, usuario: Usuario) -> 
     return produto
 
 
-def pode_decidir(usuario: Usuario, produto: Produto) -> bool:
-    """O usuário é responsável pela etapa atual do produto?
+def areas_do_usuario(sessao, usuario: Usuario) -> list[str]:
+    """Áreas pelas quais este usuário pode dar parecer.
+
+    Vem da tabela de aprovadores (mantida na tela de Aprovações). O papel
+    do cadastro continua valendo como atalho, para não quebrar bases
+    antigas. O ADMIN responde por qualquer área.
+    """
+    if not usuario:
+        return []
+    if usuario.papel == "ADMIN":
+        return [chave for chave, _ in FLUXO_APROVACAO]
+    areas = set(
+        sessao.scalars(
+            select(AreaAprovador.area).where(
+                AreaAprovador.usuario_id == usuario.id, AreaAprovador.ativo.is_(True)
+            )
+        )
+    )
+    if usuario.papel in dict(FLUXO_APROVACAO):
+        areas.add(usuario.papel)
+    return [chave for chave, _ in FLUXO_APROVACAO if chave in areas]
+
+
+def areas_para_decidir(sessao, usuario: Usuario, produto: Produto) -> list[str]:
+    """Etapas deste produto que o usuário pode decidir agora."""
+    if produto.status not in ("PENDENTE", "EM_ANALISE"):
+        return []
+    return [area for area in areas_do_usuario(sessao, usuario) if produto.aguarda(area)]
+
+
+def pode_decidir(sessao, usuario: Usuario, produto: Produto) -> bool:
+    """Há alguma etapa pendente que este usuário possa decidir?
 
     Vale para PENDENTE (ninguém decidiu ainda) e EM_ANALISE. Enquanto o
     produto está AGUARDANDO_CORRECAO a bola está com o solicitante.
     """
-    if produto.status not in ("PENDENTE", "EM_ANALISE") or not produto.etapa_atual:
-        return False
-    return usuario.papel == produto.etapa_atual or usuario.papel == "ADMIN"
+    return bool(areas_para_decidir(sessao, usuario, produto))
 
 
 def pode_corrigir(usuario: Usuario, produto: Produto) -> bool:
@@ -268,34 +333,46 @@ def pode_corrigir(usuario: Usuario, produto: Produto) -> bool:
 
 
 def registrar_decisao(
-    sessao, produto: Produto, usuario: Usuario, decisao: str, parecer: str
+    sessao, produto: Produto, usuario: Usuario, decisao: str, parecer: str,
+    area: str | None = None,
 ) -> Produto:
-    """Aprova ou reprova a etapa atual e avança (ou encerra) o fluxo."""
-    etapa = produto.etapa_atual
-    aprovacao = next((a for a in produto.aprovacoes if a.etapa == etapa), None)
+    """Registra o parecer de UMA área e reavalia a situação do produto.
+
+    Não existe ordem entre as áreas: cada uma decide quando quiser. O
+    Aprovador Final só é acionado quando as demais concluírem, e é ele
+    quem fecha a aprovação.
+    """
+    permitidas = areas_para_decidir(sessao, usuario, produto)
+    if area is None:
+        area = permitidas[0] if len(permitidas) == 1 else None
+    if area is None or area not in permitidas:
+        raise ValueError("Etapa de aprovação inválida para este usuário.")
+
+    aprovacao = next((a for a in produto.aprovacoes if a.etapa == area), None)
     if aprovacao is None:
         raise ValueError("Etapa de aprovação não encontrada para este produto.")
 
+    etapa = area
     status_antes = produto.status
     aprovacao.decisao = decisao
     aprovacao.parecer = parecer or None
     aprovacao.aprovador_id = usuario.id
     aprovacao.decidido_em = datetime.now()
+    sessao.flush()
 
     if decisao == "REPROVADO":
+        # Uma reprovação encerra o processo, venha de qual área vier.
         produto.status = "REPROVADO"
         produto.etapa_atual = None
         produto.concluido_em = datetime.now()
+    elif etapa == ETAPA_FINAL:
+        produto.status = "APROVADO"
+        produto.etapa_atual = None
+        produto.concluido_em = datetime.now()
     else:
-        etapas = [e for e, _ in FLUXO_APROVACAO]
-        indice = etapas.index(etapa)
-        if indice + 1 < len(etapas):
-            produto.etapa_atual = etapas[indice + 1]
-            produto.status = "EM_ANALISE"
-        else:
-            produto.status = "APROVADO"
-            produto.etapa_atual = None
-            produto.concluido_em = datetime.now()
+        produto.status = "EM_ANALISE"
+        # Concluídas as áreas, a bola passa para o Aprovador Final.
+        produto.etapa_atual = ETAPA_FINAL if produto.areas_concluidas else None
 
     produto.pendencia = None
     produto.atualizado_em = datetime.now()
@@ -315,8 +392,9 @@ def registrar_decisao(
     notificacoes.notificar_decisao(sessao, produto, etapa, decisao, parecer)
     if produto.status in ("APROVADO", "REPROVADO"):
         notificacoes.notificar_conclusao(sessao, produto)
-    elif produto.etapa_atual:
-        notificacoes.notificar_etapa_pendente(sessao, produto, produto.etapa_atual)
+    elif produto.etapa_atual == ETAPA_FINAL:
+        # Só agora o Aprovador Final é chamado.
+        notificacoes.notificar_etapa_pendente(sessao, produto, ETAPA_FINAL)
     return produto
 
 
@@ -328,7 +406,9 @@ def solicitar_correcao(sessao, produto: Produto, usuario: Usuario, motivo: str) 
     valendo.
     """
     status_antes = produto.status
-    etapa = produto.etapa_atual
+    etapa = usuario.papel if usuario.papel in dict(FLUXO_APROVACAO) else (
+        (produto.areas_pendentes or [ETAPA_FINAL])[0]
+    )
     produto.status = "AGUARDANDO_CORRECAO"
     produto.pendencia = motivo
     produto.atualizado_em = datetime.now()
@@ -365,8 +445,7 @@ def reenviar_apos_correcao(sessao, produto: Produto, usuario: Usuario, resposta:
         status_anterior=status_antes,
         status_novo=produto.status,
     )
-    if produto.etapa_atual:
-        notificacoes.notificar_reenvio(sessao, produto, produto.etapa_atual, resposta)
+    notificacoes.notificar_reenvio(sessao, produto, resposta)
     return produto
 
 
@@ -429,28 +508,24 @@ def reativar(sessao, produto: Produto, usuario: Usuario) -> Produto:
 
 
 # ------------------------------------------------------------ Consultas
+def solicitacoes_pendentes_de(sessao, usuario: Usuario) -> list[Produto]:
+    """Solicitações que dependem de um parecer deste usuário agora."""
+    areas = areas_do_usuario(sessao, usuario)
+    if not areas:
+        return []
+    abertas = list(
+        sessao.scalars(
+            select(Produto)
+            .where(Produto.status.in_(("PENDENTE", "EM_ANALISE")))
+            .order_by(Produto.criado_em)
+        ).unique()
+    )
+    return [p for p in abertas if any(p.aguarda(a) for a in areas)]
+
+
 def contar_pendencias(sessao, usuario: Usuario) -> int:
     """Quantas solicitações aguardam a análise deste usuario."""
-    if usuario.papel in [e for e, _ in FLUXO_APROVACAO]:
-        return (
-            sessao.scalar(
-                select(func.count(Produto.id)).where(
-                    Produto.status.in_(("PENDENTE", "EM_ANALISE")),
-                    Produto.etapa_atual == usuario.papel,
-                )
-            )
-            or 0
-        )
-    if usuario.papel == "ADMIN":
-        return (
-            sessao.scalar(
-                select(func.count(Produto.id)).where(
-                    Produto.status.in_(("PENDENTE", "EM_ANALISE"))
-                )
-            )
-            or 0
-        )
-    return 0
+    return len(solicitacoes_pendentes_de(sessao, usuario))
 
 
 def filtrar_por_situacao_fds(produtos: list, situacao: str) -> list:
@@ -479,11 +554,19 @@ def indicadores(sessao) -> dict:
         .group_by(Produto.categoria)
         .order_by(func.count(Produto.id).desc())
     ).all()
-    por_etapa = sessao.execute(
-        select(Produto.etapa_atual, func.count(Produto.id))
-        .where(Produto.status.in_(("PENDENTE", "EM_ANALISE")))
-        .group_by(Produto.etapa_atual)
-    ).all()
+    # Pendências por área: como as áreas analisam em paralelo, a contagem
+    # vem das etapas ainda sem parecer, e não de uma "etapa atual".
+    abertos = list(
+        sessao.scalars(
+            select(Produto).where(Produto.status.in_(("PENDENTE", "EM_ANALISE")))
+        ).unique()
+    )
+    contagem = {chave: 0 for chave, _ in FLUXO_APROVACAO}
+    for produto in abertos:
+        for area in produto.areas_pendentes:
+            if produto.aguarda(area):
+                contagem[area] = contagem.get(area, 0) + 1
+    por_etapa = [(chave, contagem.get(chave, 0)) for chave, _ in FLUXO_APROVACAO]
     por_fabricante = sessao.execute(
         select(Produto.fabricante, func.count(Produto.id))
         .group_by(Produto.fabricante)
@@ -506,7 +589,7 @@ def indicadores(sessao) -> dict:
         "abertas": sum(por_status.get(s, 0) for s in STATUS_ABERTOS),
         "por_categoria": [(c or "Não informada", n) for c, n in por_categoria],
         "por_etapa": [
-            (dict(FLUXO_APROVACAO).get(e, e or "-"), n) for e, n in por_etapa
+            (dict(FLUXO_APROVACAO).get(e, e or "-"), n) for e, n in por_etapa if n
         ],
         "por_fabricante": [(f or "-", n) for f, n in por_fabricante],
         "total_documentos": total_docs,
@@ -571,3 +654,345 @@ def buscar_produtos(
     if limite:
         consulta = consulta.limit(limite)
     return list(sessao.scalars(consulta).unique())
+
+
+# =====================================================================
+# Recursos e Documentos (biblioteca)
+# =====================================================================
+
+from models import (  # noqa: E402  (agrupado aqui para isolar o módulo novo)
+    SECOES_RECURSO,
+    Recurso,
+    RecursoArquivo,
+    grupo_do_arquivo,
+    sem_acento,
+)
+
+# Perfis autorizados a publicar, revisar e arquivar documentos da biblioteca.
+PAPEIS_BIBLIOTECA = (
+    "SAUDE",
+    "SEGURANCA",
+    "MEIO_AMBIENTE",
+    "QUIMICO_RESPONSAVEL",
+    "ADMIN",
+)
+
+PERIODOS_RECURSO = {
+    "30": "Últimos 30 dias",
+    "90": "Últimos 90 dias",
+    "365": "Últimos 12 meses",
+}
+
+ORDENACOES_RECURSO = {
+    "recentes": "Atualizados primeiro",
+    "titulo": "Ordem alfabética",
+    "baixados": "Mais baixados",
+}
+
+
+def pode_publicar(usuario) -> bool:
+    return bool(usuario) and usuario.papel in PAPEIS_BIBLIOTECA
+
+
+def criar_recurso(sessao, dados: dict, autor, arquivo: dict | None = None) -> Recurso:
+    """Cria um item da biblioteca. `arquivo` é obrigatório quando não é link."""
+    recurso = Recurso(
+        secao=dados.get("secao") or "PROCEDIMENTOS",
+        titulo=dados["titulo"],
+        codigo=dados.get("codigo") or None,
+        descricao=dados.get("descricao") or None,
+        palavras_chave=dados.get("palavras_chave") or None,
+        tipo_midia=dados.get("tipo_midia") or "ARQUIVO",
+        url=dados.get("url") or None,
+        versao_atual=1,
+        data_revisao=dados.get("data_revisao"),
+        proxima_revisao=dados.get("proxima_revisao"),
+        responsavel_id=autor.id if autor else None,
+    )
+    sessao.add(recurso)
+    sessao.flush()
+
+    if arquivo:
+        sessao.add(
+            RecursoArquivo(
+                recurso_id=recurso.id,
+                versao=1,
+                nome_arquivo=arquivo["nome"],
+                content_type=arquivo.get("content_type"),
+                tamanho=len(arquivo["conteudo"]),
+                conteudo=arquivo["conteudo"],
+                data_revisao=dados.get("data_revisao"),
+                notas=dados.get("notas") or "Versão inicial.",
+                enviado_por_id=autor.id if autor else None,
+            )
+        )
+    sessao.flush()
+    registrar_log(
+        sessao,
+        "RECURSO_PUBLICADO",
+        f"{SECOES_RECURSO.get(recurso.secao, recurso.secao)}: {recurso.titulo}",
+        autor.id if autor else None,
+    )
+    return recurso
+
+
+def atualizar_recurso(sessao, recurso: Recurso, dados: dict, autor) -> Recurso:
+    """Altera os metadados (não mexe no arquivo nem na versão)."""
+    recurso.secao = dados.get("secao") or recurso.secao
+    recurso.titulo = dados.get("titulo") or recurso.titulo
+    recurso.codigo = dados.get("codigo") or None
+    recurso.descricao = dados.get("descricao") or None
+    recurso.palavras_chave = dados.get("palavras_chave") or None
+    if recurso.e_link:
+        recurso.url = dados.get("url") or recurso.url
+    recurso.data_revisao = dados.get("data_revisao") or recurso.data_revisao
+    recurso.proxima_revisao = dados.get("proxima_revisao")
+    recurso.atualizado_em = datetime.now()
+    sessao.flush()
+    registrar_log(
+        sessao,
+        "RECURSO_EDITADO",
+        f"Dados de '{recurso.titulo}' atualizados.",
+        autor.id if autor else None,
+    )
+    return recurso
+
+
+def publicar_versao(sessao, recurso: Recurso, arquivo: dict, autor,
+                    data_revisao=None, notas: str | None = None) -> Recurso:
+    """Sobe uma nova versão do arquivo, preservando as anteriores."""
+    nova = (recurso.versao_atual or 0) + 1
+    sessao.add(
+        RecursoArquivo(
+            recurso_id=recurso.id,
+            versao=nova,
+            nome_arquivo=arquivo["nome"],
+            content_type=arquivo.get("content_type"),
+            tamanho=len(arquivo["conteudo"]),
+            conteudo=arquivo["conteudo"],
+            data_revisao=data_revisao,
+            notas=notas or None,
+            enviado_por_id=autor.id if autor else None,
+        )
+    )
+    recurso.versao_atual = nova
+    recurso.data_revisao = data_revisao or date.today()
+    recurso.responsavel_id = autor.id if autor else recurso.responsavel_id
+    recurso.atualizado_em = datetime.now()
+    sessao.flush()
+    registrar_log(
+        sessao,
+        "RECURSO_NOVA_VERSAO",
+        f"'{recurso.titulo}' atualizado para a versão {nova}."
+        + (f" Alterações: {notas}" if notas else ""),
+        autor.id if autor else None,
+    )
+    sessao.refresh(recurso)
+    return recurso
+
+
+def arquivar_recurso(sessao, recurso: Recurso, autor, ativo: bool = False) -> Recurso:
+    recurso.ativo = ativo
+    recurso.atualizado_em = datetime.now()
+    sessao.flush()
+    registrar_log(
+        sessao,
+        "RECURSO_RESTAURADO" if ativo else "RECURSO_ARQUIVADO",
+        f"'{recurso.titulo}'",
+        autor.id if autor else None,
+    )
+    return recurso
+
+
+def registrar_download(sessao, recurso: Recurso) -> None:
+    recurso.downloads = (recurso.downloads or 0) + 1
+    sessao.flush()
+
+
+def buscar_recursos(
+    sessao,
+    termo: str = "",
+    secao: str = "",
+    grupo: str = "",
+    periodo: str = "",
+    ordem: str = "recentes",
+    incluir_arquivados: bool = False,
+) -> list[Recurso]:
+    """Busca por texto livre, seção, tipo de arquivo e período de atualização."""
+    consulta = select(Recurso)
+    if not incluir_arquivados:
+        consulta = consulta.where(Recurso.ativo.is_(True))
+    if secao in SECOES_RECURSO:
+        consulta = consulta.where(Recurso.secao == secao)
+    itens = list(sessao.scalars(consulta).unique())
+
+    if termo:
+        alvo = sem_acento(termo.strip())
+        itens = [r for r in itens if alvo in r.texto_busca()]
+    if grupo:
+        itens = [r for r in itens if r.grupo_arquivo == grupo]
+    if periodo and periodo.isdigit():
+        limite = date.today() - timedelta(days=int(periodo))
+        itens = [r for r in itens if r.data_referencia >= limite]
+
+    if ordem == "titulo":
+        itens.sort(key=lambda r: r.titulo.lower())
+    elif ordem == "baixados":
+        itens.sort(key=lambda r: (-(r.downloads or 0), r.titulo.lower()))
+    else:
+        itens.sort(key=lambda r: r.data_referencia, reverse=True)
+    return itens
+
+
+def indicadores_recursos(sessao) -> dict:
+    """Números da biblioteca: total, por seção e revisões vencidas."""
+    itens = list(sessao.scalars(select(Recurso).where(Recurso.ativo.is_(True))).unique())
+    por_secao = {chave: 0 for chave in SECOES_RECURSO}
+    for r in itens:
+        por_secao[r.secao] = por_secao.get(r.secao, 0) + 1
+    return {
+        "total": len(itens),
+        "por_secao": por_secao,
+        "links": sum(1 for r in itens if r.e_link),
+        "arquivos": sum(1 for r in itens if not r.e_link),
+        "downloads": sum(r.downloads or 0 for r in itens),
+        "revisao_vencida": [r for r in itens if r.revisao_vencida],
+        "grupos": sorted({r.grupo_arquivo for r in itens}),
+    }
+
+
+# =====================================================================
+# Aprovadores por área (mantidos pela tela de Aprovações)
+# =====================================================================
+
+
+def aprovadores_da_area(sessao, area: str) -> list[Usuario]:
+    """Pessoas cadastradas para aprovar por esta área."""
+    vinculos = sessao.scalars(
+        select(AreaAprovador)
+        .where(AreaAprovador.area == area, AreaAprovador.ativo.is_(True))
+        .order_by(AreaAprovador.id)
+    ).unique()
+    pessoas = [v.usuario for v in vinculos if v.usuario and v.usuario.ativo]
+    # Compatibilidade: quem tem o papel da área e ainda não foi vinculado.
+    for usuario in sessao.scalars(
+        select(Usuario).where(Usuario.papel == area, Usuario.ativo.is_(True))
+    ):
+        if usuario.id not in {p.id for p in pessoas}:
+            pessoas.append(usuario)
+    return pessoas
+
+
+def mapa_aprovadores(sessao) -> dict[str, list[Usuario]]:
+    """Dicionário {área: [pessoas]} para a tela de gestão."""
+    return {chave: aprovadores_da_area(sessao, chave) for chave, _ in FLUXO_APROVACAO}
+
+
+def adicionar_aprovador(sessao, area: str, usuario: Usuario, autor=None) -> AreaAprovador:
+    """Vincula uma pessoa a uma área (idempotente)."""
+    vinculo = sessao.scalar(
+        select(AreaAprovador).where(
+            AreaAprovador.area == area, AreaAprovador.usuario_id == usuario.id
+        )
+    )
+    if vinculo:
+        vinculo.ativo = True
+    else:
+        vinculo = AreaAprovador(area=area, usuario_id=usuario.id, ativo=True)
+        sessao.add(vinculo)
+    # Quem só era solicitante passa a ter o papel da área, para os acessos.
+    if usuario.papel == "SOLICITANTE":
+        usuario.papel = area
+    sessao.flush()
+    registrar_log(
+        sessao,
+        "APROVADOR_ADICIONADO",
+        f"{usuario.nome} passou a aprovar por {dict(FLUXO_APROVACAO).get(area, area)}.",
+        autor.id if autor else None,
+    )
+    return vinculo
+
+
+def remover_aprovador(sessao, area: str, usuario_id: int, autor=None) -> None:
+    """Desvincula a pessoa da área (o usuário continua existindo)."""
+    usuario = sessao.get(Usuario, usuario_id)
+    vinculo = sessao.scalar(
+        select(AreaAprovador).where(
+            AreaAprovador.area == area, AreaAprovador.usuario_id == usuario_id
+        )
+    )
+    if vinculo:
+        vinculo.ativo = False
+    if usuario and usuario.papel == area:
+        # Sem o vínculo, o papel deixaria a pessoa aprovando assim mesmo.
+        usuario.papel = "SOLICITANTE"
+    sessao.flush()
+    registrar_log(
+        sessao,
+        "APROVADOR_REMOVIDO",
+        f"{usuario.nome if usuario else usuario_id} deixou de aprovar por "
+        f"{dict(FLUXO_APROVACAO).get(area, area)}.",
+        autor.id if autor else None,
+    )
+
+
+def sincronizar_aprovadores(sessao) -> int:
+    """Cria os vínculos a partir dos papéis já cadastrados (uma vez)."""
+    criados = 0
+    for area, _ in FLUXO_APROVACAO:
+        for usuario in sessao.scalars(
+            select(Usuario).where(Usuario.papel == area, Usuario.ativo.is_(True))
+        ):
+            existente = sessao.scalar(
+                select(AreaAprovador).where(
+                    AreaAprovador.area == area, AreaAprovador.usuario_id == usuario.id
+                )
+            )
+            if not existente:
+                sessao.add(AreaAprovador(area=area, usuario_id=usuario.id, ativo=True))
+                criados += 1
+    sessao.flush()
+    return criados
+
+
+# =====================================================================
+# Lembretes automáticos (a cada 7 dias enquanto a solicitação não fecha)
+# =====================================================================
+
+DIAS_LEMBRETE = 7
+
+
+def solicitacoes_atrasadas(sessao, dias: int = DIAS_LEMBRETE) -> list[Produto]:
+    """Solicitações abertas que passaram do prazo sem novo lembrete."""
+    limite = datetime.now() - timedelta(days=dias)
+    abertas = list(
+        sessao.scalars(
+            select(Produto).where(Produto.status.in_(STATUS_ABERTOS)).order_by(Produto.criado_em)
+        ).unique()
+    )
+    pendentes = []
+    for produto in abertas:
+        referencia = produto.ultimo_lembrete_em or produto.criado_em
+        if referencia and referencia <= limite:
+            pendentes.append(produto)
+    return pendentes
+
+
+def enviar_lembretes(sessao, dias: int = DIAS_LEMBRETE) -> int:
+    """Cobra os aprovadores pendentes e avisa o solicitante. Retorna quantas
+    solicitações foram cobradas."""
+    enviados = 0
+    for produto in solicitacoes_atrasadas(sessao, dias):
+        notificacoes.notificar_lembrete(sessao, produto)
+        produto.ultimo_lembrete_em = datetime.now()
+        registrar_log(
+            sessao,
+            "LEMBRETE_ENVIADO",
+            "Cobrança automática das áreas pendentes: "
+            + (", ".join(produto.areas_pendentes_labels) or "-"),
+            None,
+            produto.id,
+        )
+        enviados += 1
+    sessao.flush()
+    return enviados

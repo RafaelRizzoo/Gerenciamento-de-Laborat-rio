@@ -69,12 +69,19 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587") or 587)
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_TLS = _bool("SMTP_TLS", True)
-SMTP_FROM = os.getenv("SMTP_FROM", "gestão.químicos@tenaris.com")
+SMTP_FROM = os.getenv("SMTP_FROM", "gestao.quimicos@tenaris.com")
 SMTP_ATIVO = bool(SMTP_HOST)
 
 # ---------------------------------------------------------------- Upload
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "20") or 20)
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+# --------------------------------------------------------- Lembretes
+# Cobrança automática das solicitações paradas: o main.py verifica ao
+# subir e a cada 12 horas. Desligue com LEMBRETES_ATIVOS=0 se preferir
+# usar o Agendador de Tarefas do Windows chamando lembretes.py.
+LEMBRETES_ATIVOS = _bool("LEMBRETES_ATIVOS", True)
+LEMBRETE_DIAS = int(os.getenv("LEMBRETE_DIAS", "7") or 7)
 
 APP_NOME = "Gestão de Produtos Químicos"
 APP_EMPRESA = "Tenaris"

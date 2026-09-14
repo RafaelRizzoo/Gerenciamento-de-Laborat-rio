@@ -24,11 +24,13 @@ import servicos
 import ui
 from database import criar_tabelas, db_session, descricao_conexao
 from models import (
+    AREAS_APROVACAO,
     AREAS_SOLICITANTES,
     CATEGORIAS,
     CLASSES_RISCO,
     DOCUMENTOS_OBRIGATORIOS,
     ESTADOS_FISICOS,
+    ETAPA_FINAL,
     FABRICAS,
     FDS_ALERTA_MESES,
     FDS_VALIDADE_ANOS,
@@ -36,7 +38,12 @@ from models import (
     MOTIVOS_REPROVACAO,
     ORGAOS_CONTROLADORES,
     PAPEIS,
+    DESCRICAO_SECAO,
+    ICONE_SECAO,
+    ROTULOS_GRUPO_ARQUIVO,
+    SECOES_RECURSO,
     SITUACOES_FDS,
+    TIPOS_MIDIA,
     STATUS,
     STATUS_ABERTOS,
     TIPOS_DOCUMENTO,
@@ -44,7 +51,10 @@ from models import (
     Documento,
     LogAuditoria,
     Notificacao,
+    AreaAprovador,
     Produto,
+    Recurso,
+    RecursoArquivo,
     Usuario,
 )
 from security import gerar_hash, verificar_senha
@@ -278,7 +288,7 @@ def get(req, erro: str = "", ok: str = ""):
         ui.cartao_atalho(
             ui.ICONES["nova"], "Cadastro",
             "Cadastre um novo produto químico anexando a FDS e inicie o fluxo de aprovação.",
-            "/solicitacoes/nova", "azul", etiqueta=None if usuario else "login",
+            "/solicitacoes/nova", "azul",
         ),
         ui.cartao_atalho(
             ui.ICONES["kit"], "Kit Ambiental",
@@ -303,12 +313,37 @@ def get(req, erro: str = "", ok: str = ""):
         ),
     ]
 
+    pendentes = sum(ind["por_status"].get(s, 0) for s in STATUS_ABERTOS)
+
+    indicadores_home = Div(
+        A(
+            Div("Produtos Aprovados", cls="rotulo"),
+            Div(str(aprovados), cls="valor"),
+            Div("liberados para uso", cls="nota"),
+            href="/produtos",
+            cls="kpi-inicio verde",
+        ),
+        A(
+            Div("Produtos Pendentes", cls="rotulo"),
+            Div(str(pendentes), cls="valor"),
+            Div("em análise pelas áreas", cls="nota"),
+            href="/aprovacoes",
+            cls="kpi-inicio ambar",
+        ),
+        A(
+            Div("Produtos Reprovados", cls="rotulo"),
+            Div(str(ind["por_status"].get("REPROVADO", 0)), cls="valor"),
+            Div("não liberados", cls="nota"),
+            href="/historico?status=REPROVADO",
+            cls="kpi-inicio vermelho",
+        ),
+        cls="painel-inicio",
+    )
+
     resumo = Div(
-        Span(B(str(aprovados)), " produtos aprovados"),
-        Span("•", cls="ponto"),
         Span(B(str(ind["total_fds"])), " fichas FDS disponíveis"),
         Span("•", cls="ponto"),
-        Span(B(str(ind["por_status"].get("EM_ANALISE", 0))), " em análise"),
+        Span(B(str(ind["total"])), " produtos cadastrados"),
         cls="resumo-publico",
     )
 
@@ -319,6 +354,7 @@ def get(req, erro: str = "", ok: str = ""):
             ui.alerta(erro, "erro") if erro else None,
             ui.alerta(ok, "sucesso") if ok else None,
             Div(*atalhos, cls="atalhos"),
+            indicadores_home,
             resumo,
             cls="faixa-atalhos",
         ),
@@ -338,15 +374,9 @@ def get(req):
         recentes = list(
             s.scalars(select(Produto).order_by(desc(Produto.criado_em)).limit(8)).unique()
         )
-        minhas_pendencias = (
-            servicos.buscar_produtos(s, status="EM_ANALISE", limite=5)
-            if usuario.papel == "ADMIN"
-            else [
-                p
-                for p in servicos.buscar_produtos(s, status="EM_ANALISE", limite=100)
-                if p.etapa_atual == usuario.papel
-            ][:5]
-        )
+        minhas_pendencias = servicos.solicitacoes_pendentes_de(
+            s, s.get(Usuario, usuario.id)
+        )[:5]
 
     kpis = Div(
         A(
@@ -377,14 +407,14 @@ def get(req):
             cls="kpi roxo",
         ),
         A(
-            Div("Aprovados", cls="rotulo"),
+            Div("Produtos Aprovados", cls="rotulo"),
             Div(str(ind["por_status"].get("APROVADO", 0)), cls="valor"),
             Div("liberados para uso", cls="nota"),
             href="/produtos",
             cls="kpi verde",
         ),
         A(
-            Div("Reprovados", cls="rotulo"),
+            Div("Produtos Reprovados", cls="rotulo"),
             Div(str(ind["por_status"].get("REPROVADO", 0)), cls="valor"),
             Div("não liberados", cls="nota"),
             href="/historico?status=REPROVADO",
@@ -409,16 +439,6 @@ def get(req):
     )
 
     alertas = []
-    if ind["sem_fds"]:
-        alertas.append(
-            ui.alerta(
-                Span(
-                    B(f"{ind['sem_fds']} produto(s) sem FDS anexada. "),
-                    "A FDS é documento obrigatório para aprovação.",
-                ),
-                "aviso",
-            )
-        )
     if not config.SMTP_ATIVO:
         alertas.append(
             ui.alerta(
@@ -440,7 +460,7 @@ def get(req):
         ),
         Div(
             Div(
-                H2("Pendências por etapa do fluxo"),
+                H2("Pendências por área"),
                 Span(cls="direita"),
                 cls="card-titulo",
             ),
@@ -565,10 +585,11 @@ def _barra_filtros(acao: str, termo: str, status: str, categoria: str, com_statu
 
 @rt("/solicitacoes/nova")
 def get(req, erro: str = ""):
-    """Passo 1: anexar a FDS. Os dados são extraídos dela no passo 2."""
-    barrado = exigir_login(req)
-    if barrado:
-        return barrado
+    """Passo 1: anexar a FDS. Os dados são extraídos dela no passo 2.
+
+    Aberto: qualquer colaborador cadastra sem login. Quem não está
+    identificado informa nome e e-mail no passo 2.
+    """
     usuario = eu(req)
 
     formulario = Form(
@@ -662,9 +683,6 @@ def _guardar_rascunho(conteudo: bytes, nome: str, content_type: str | None) -> s
 @rt("/solicitacoes/ler-fds")
 async def post(req):
     """Recebe a FDS, extrai o que consegue e mostra o formulário do passo 2."""
-    barrado = exigir_login(req)
-    if barrado:
-        return barrado
     usuario = eu(req)
     form = await req.form()
     enviado = form.get("arquivo_fds")
@@ -710,6 +728,24 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
         Input(type="hidden", name="token", value=token),
         # Depois de ver o aviso de duplicidade, reenviar confirma que é outro produto.
         Input(type="hidden", name="confirmar_duplicado", value="1") if duplicado else None,
+        # Sem login: precisamos saber quem está solicitando para o retorno.
+        Fieldset(
+            Legend("Seus dados"),
+            P(
+                "Você não está identificado no sistema. Informe seu nome e e-mail "
+                "corporativo para acompanhar a solicitação e receber os avisos de "
+                "aprovação.",
+                cls="texto-mudo",
+            ),
+            Div(
+                ui.campo("Seu nome", "solicitante_nome",
+                         valor=dados.get("solicitante_nome", ""), obrigatório=True),
+                ui.campo("Seu e-mail corporativo", "solicitante_email", "email",
+                         dados.get("solicitante_email", ""), True),
+                cls="linha-form",
+            ),
+            cls="secao",
+        ) if usuario is None else None,
         Fieldset(
             Legend("Identificação do produto"),
             Div(
@@ -914,9 +950,6 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
 @rt("/solicitacoes/nova")
 async def post(req):
     """Passo 3: valida tudo, grava a solicitação e dispara o fluxo."""
-    barrado = exigir_login(req)
-    if barrado:
-        return barrado
     usuario = eu(req)
     form = await req.form()
     dados = {k: (v.strip() if isinstance(v, str) else v) for k, v in form.items()}
@@ -961,6 +994,11 @@ async def post(req):
         ("classificacao_ghs", "Classificação GHS"),
         ("observacoes", "Observações"),
     ]
+    if usuario is None:
+        obrigatorios = [
+            ("solicitante_nome", "Seu nome"),
+            ("solicitante_email", "Seu e-mail corporativo"),
+        ] + obrigatorios
     faltando = [rotulo for campo, rotulo in obrigatorios if not dados.get(campo)]
     if unidade_solicitante not in FABRICAS:
         faltando.append("Unidade solicitante")
@@ -970,6 +1008,9 @@ async def post(req):
         faltando.append("Data de revisão da FDS")
     if faltando:
         return voltar("Preencha os campos obrigatórios: " + ", ".join(faltando) + ".")
+
+    if usuario is None and "@" not in (dados.get("solicitante_email") or ""):
+        return voltar("Informe um e-mail corporativo válido.")
 
     if orgao != "NAO" and orgao in ORGAOS_CONTROLADORES and not dados.get("numero_licenca"):
         return voltar(
@@ -1019,7 +1060,13 @@ async def post(req):
                      "produto, reenvie o formulário para confirmar.",
             )
         dados["codigo_interno"] = servicos.proximo_codigo(s)
-        produto = servicos.criar_solicitacao(s, dados, s.get(Usuario, usuario.id), arquivos)
+        if usuario is not None:
+            solicitante = s.get(Usuario, usuario.id)
+        else:
+            solicitante = servicos.obter_ou_criar_solicitante(
+                s, dados.get("solicitante_nome"), dados.get("solicitante_email")
+            )
+        produto = servicos.criar_solicitacao(s, dados, solicitante, arquivos)
         pid = produto.id
 
     _RASCUNHOS.pop(token, None)
@@ -1059,16 +1106,74 @@ def get(req):
     )
 
 
-def _tabela_solicitacoes(produtos, papel_usuario: str):
+def _painel_aprovadores(aprovadores: dict, pessoas: list):
+    """Quem aprova por cada área — editável sem mexer no código."""
+    cartoes = []
+    for area, rotulo in FLUXO_APROVACAO:
+        lista = aprovadores.get(area, [])
+        linhas = [
+            Div(
+                Span(B(u.nome), Br(), Span(u.email, cls="email")),
+                Form(
+                    Input(type="hidden", name="area", value=area),
+                    Input(type="hidden", name="usuario_id", value=str(u.id)),
+                    Button("remover", cls="tirar", type="submit"),
+                    method="post",
+                    action="/aprovadores/remover",
+                ),
+                cls="pessoa",
+            )
+            for u in lista
+        ]
+        if not linhas:
+            linhas = [Div("Nenhum aprovador cadastrado nesta área.", cls="vazio-area")]
+        cartoes.append(
+            Div(
+                H3(rotulo, Span(f"{len(lista)} pessoa(s)", cls="qtd")),
+                *linhas,
+                Form(
+                    Input(type="hidden", name="area", value=area),
+                    Select(
+                        Option("Adicionar pessoa...", value="", selected=True),
+                        *[Option(nome, value=uid) for uid, nome in pessoas],
+                        name="usuario_id",
+                        required=True,
+                    ),
+                    Button("+", cls="btn pequeno", type="submit", title="Adicionar"),
+                    method="post",
+                    action="/aprovadores/adicionar",
+                    cls="incluir",
+                ),
+                cls="area-card",
+            )
+        )
+    return Div(
+        Div(
+            H2("Aprovadores por área"),
+            Span("Admin e Aprovador Final podem alterar", cls="direita"),
+            cls="card-titulo",
+        ),
+        P(
+            "Cada área pode ter quantas pessoas quiser e basta UMA delas registrar "
+            "o parecer para a área concluir. Quem não aparecer na lista precisa "
+            "primeiro ter usuário cadastrado em ",
+            A("Usuários", href="/usuarios"),
+            ".",
+            cls="pequeno texto-mudo",
+        ),
+        Div(*cartoes, cls="areas-gestao"),
+        cls="card",
+    )
+
+
+def _tabela_solicitacoes(produtos, areas_usuario):
     """Tabela do módulo de aprovações, com as colunas que o aprovador precisa."""
     if not produtos:
         return ui.vazio("Nenhuma solicitação encontrada com esses filtros.", "☑")
+    areas_usuario = list(areas_usuario or [])
     linhas = []
     for p in produtos:
-        minha = (
-            p.status in ("PENDENTE", "EM_ANALISE")
-            and p.etapa_atual == papel_usuario
-        )
+        minha = any(p.aguarda(area) for area in areas_usuario)
         linhas.append(
             Tr(
                 Td(A(p.codigo_interno, href=f"/produtos/{p.id}"), cls="mono nowrap"),
@@ -1098,7 +1203,10 @@ def _tabela_solicitacoes(produtos, papel_usuario: str):
                 Td(
                     ui.badge(p.status),
                     Br(),
-                    Span(p.etapa_label or "-", cls="pequeno texto-mudo"),
+                    Span(
+                        ", ".join(p.areas_pendentes_labels) if p.aberta else "-",
+                        cls="pequeno texto-mudo",
+                    ),
                 ),
                 Td(
                     A("Analisar", href=f"/produtos/{p.id}", cls="btn pequeno")
@@ -1124,7 +1232,7 @@ def _tabela_solicitacoes(produtos, papel_usuario: str):
 
 @rt("/aprovacoes")
 def get(req, status: str = "", fabrica: str = "", solicitante: str = "",
-        de: str = "", ate: str = "", q: str = ""):
+        de: str = "", ate: str = "", q: str = "", ok: str = "", erro: str = ""):
     """Gestão do fluxo de aprovação. Exige login."""
     barrado = exigir_login(req)
     if barrado:
@@ -1144,15 +1252,21 @@ def get(req, status: str = "", fabrica: str = "", solicitante: str = "",
             chave: sum(1 for p in produtos if p.status == chave)
             for chave in STATUS_ABERTOS
         }
-        minhas = sum(
-            1
-            for p in produtos
-            if p.status in ("PENDENTE", "EM_ANALISE") and p.etapa_atual == usuario.papel
-        )
+        u_atual = s.get(Usuario, usuario.id)
+        areas_usuario = servicos.areas_do_usuario(s, u_atual)
+        minhas = sum(1 for p in produtos if any(p.aguarda(a) for a in areas_usuario))
         solicitantes = list(
             s.scalars(select(Usuario).order_by(Usuario.nome)).unique()
         )
         opcoes_solicitante = [(str(u.id), u.nome) for u in solicitantes]
+        # Gestão da lista de aprovadores (Admin e Aprovador Final).
+        gerencia = usuario.papel in ("ADMIN", "APROVADOR_FINAL")
+        aprovadores = servicos.mapa_aprovadores(s) if gerencia else {}
+        pessoas = (
+            [(str(u.id), f"{u.nome} ({u.email})") for u in solicitantes if u.ativo]
+            if gerencia
+            else []
+        )
 
     painel = Div(
         A(
@@ -1207,29 +1321,86 @@ def get(req, status: str = "", fabrica: str = "", solicitante: str = "",
 
     return ui.pagina(
         "Aprovações",
+        ui.alerta(ok, "sucesso") if ok else None,
+        ui.alerta(erro, "erro") if erro else None,
         painel,
         Div(filtros, cls="card"),
         ui.alerta(
             Span(
-                "Sem filtro de status a lista mostra apenas as solicitações ",
-                B("em aberto"),
-                ". As linhas destacadas são as que dependem do seu parecer como ",
-                B(PAPEIS.get(usuario.papel, usuario.papel)),
+                "As áreas analisam em paralelo — não há ordem entre elas. O ",
+                B("Aprovador Final"),
+                " só é acionado quando Meio Ambiente, Saúde, Segurança e Químico "
+                "Responsável concluírem. As linhas destacadas dependem do seu "
+                "parecer",
+                Span(
+                    " (" + ", ".join(
+                        dict(FLUXO_APROVACAO).get(a, a) for a in areas_usuario
+                    ) + ")"
+                ) if areas_usuario else Span(" — você não responde por nenhuma área"),
                 ".",
             ),
             "info",
         ),
+        _painel_aprovadores(aprovadores, pessoas) if gerencia else None,
         Div(
             Div(
                 H2("Solicitações"),
                 Span(f"{len(produtos)} registro(s)", cls="direita"),
                 cls="card-titulo",
             ),
-            _tabela_solicitacoes(produtos, usuario.papel),
+            _tabela_solicitacoes(produtos, areas_usuario),
             cls="card",
         ),
         usuario=usuario,
         subtitulo="Gestão do fluxo de validação dos produtos químicos",
+    )
+
+
+@rt("/aprovadores/adicionar")
+async def post(req):
+    barrado = exigir_papel(req, "APROVADOR_FINAL")
+    if barrado:
+        return barrado
+    usuario = eu(req)
+    form = await req.form()
+    area = (form.get("area") or "").strip()
+    uid = (form.get("usuario_id") or "").strip()
+    if area not in dict(FLUXO_APROVACAO) or not uid.isdigit():
+        return RedirectResponse(
+            _msg("/aprovacoes", "erro", "Selecione a área e a pessoa."), status_code=303
+        )
+    with db_session() as s:
+        pessoa = s.get(Usuario, int(uid))
+        if not pessoa:
+            return RedirectResponse(
+                _msg("/aprovacoes", "erro", "Usuário não encontrado."), status_code=303
+            )
+        servicos.adicionar_aprovador(s, area, pessoa, s.get(Usuario, usuario.id))
+        nome, rotulo = pessoa.nome, dict(FLUXO_APROVACAO).get(area, area)
+    return RedirectResponse(
+        _msg("/aprovacoes", "ok", f"{nome} passou a aprovar por {rotulo}."),
+        status_code=303,
+    )
+
+
+@rt("/aprovadores/remover")
+async def post(req):
+    barrado = exigir_papel(req, "APROVADOR_FINAL")
+    if barrado:
+        return barrado
+    usuario = eu(req)
+    form = await req.form()
+    area = (form.get("area") or "").strip()
+    uid = (form.get("usuario_id") or "").strip()
+    if area not in dict(FLUXO_APROVACAO) or not uid.isdigit():
+        return RedirectResponse(
+            _msg("/aprovacoes", "erro", "Dados inválidos."), status_code=303
+        )
+    with db_session() as s:
+        servicos.remover_aprovador(s, area, int(uid), s.get(Usuario, usuario.id))
+        rotulo = dict(FLUXO_APROVACAO).get(area, area)
+    return RedirectResponse(
+        _msg("/aprovacoes", "ok", f"Aprovador removido de {rotulo}."), status_code=303
     )
 
 
@@ -1524,43 +1695,772 @@ def get(req, q: str = "", orgao: str = ""):
     )
 
 
+# =====================================================================
+# Recursos e Documentos (biblioteca digital)
+# =====================================================================
+#
+# Consulta e download: abertos a qualquer colaborador, sem login.
+# Publicar / revisar / arquivar: Saúde e Segurança, Meio Ambiente,
+# Químico Responsável e Administrador (servicos.PAPEIS_BIBLIOTECA).
+#
+
+
+def _pode_publicar(req) -> bool:
+    return servicos.pode_publicar(eu(req))
+
+
+def _icone_recurso(recurso):
+    """Quadradinho colorido com a extensão do arquivo (ou 'LINK')."""
+    grupo = recurso.grupo_arquivo
+    cor = {
+        "PDF": "pdf",
+        "WORD": "word",
+        "EXCEL": "excel",
+        "APRESENTACAO": "slide",
+        "IMAGEM": "imagem",
+        "VIDEO": "video",
+        "LINK": "link",
+    }.get(grupo, "")
+    return Div(recurso.extensao, cls=f"icone {cor}".strip())
+
+
+def _chips_recurso(recurso):
+    chips = [Span(recurso.secao_label, cls="chip tipo")]
+    if recurso.codigo:
+        chips.append(Span(recurso.codigo, cls="chip versao"))
+    chips.append(Span(f"v{recurso.versao_atual}", cls="chip versao"))
+    if recurso.revisao_vencida:
+        chips.append(Span("revisão vencida", cls="chip controlado vencida"))
+    if not recurso.ativo:
+        chips.append(Span("arquivado", cls="chip"))
+    return Div(*chips, cls="tags")
+
+
+def _cartao_recurso(recurso):
+    """Linha da lista da biblioteca."""
+    if recurso.e_link:
+        meta = f"Link externo • atualizado em {recurso.data_referencia.strftime('%d/%m/%Y')}"
+    else:
+        meta = (
+            f"{recurso.grupo_label} • {recurso.tamanho_legivel} • "
+            f"revisão {recurso.data_referencia.strftime('%d/%m/%Y')}"
+        )
+        if recurso.downloads:
+            meta += f" • {recurso.downloads} download(s)"
+    return Div(
+        _icone_recurso(recurso),
+        Div(
+            A(B(recurso.titulo), href=f"/recursos/{recurso.id}", cls="nome"),
+            Div(meta, cls="meta"),
+            Div(recurso.descricao, cls="desc") if recurso.descricao else None,
+            _chips_recurso(recurso),
+            cls="info",
+        ),
+        Div(
+            A(
+                "Abrir" if recurso.e_link else "Baixar",
+                href=recurso.destino,
+                target="_blank" if recurso.e_link else None,
+                rel="noopener" if recurso.e_link else None,
+                cls="btn pequeno",
+            ),
+            A("Detalhes", href=f"/recursos/{recurso.id}", cls="btn pequeno secundario"),
+            cls="acoes-doc",
+        ),
+        cls="doc recurso",
+    )
+
+
+def _filtros_recursos(q, secao, grupo, periodo, ordem, arquivados):
+    grupos = [(g, ROTULOS_GRUPO_ARQUIVO.get(g, g)) for g in ROTULOS_GRUPO_ARQUIVO]
+    return Form(
+        Div(
+            ui.campo("Pesquisar", "q", valor=q,
+                     placeholder="nome do documento, palavra-chave, código..."),
+            ui.campo("Categoria", "secao", valor=secao,
+                     opcoes=[(k, v) for k, v in SECOES_RECURSO.items()]),
+            ui.campo("Tipo de arquivo", "grupo", valor=grupo, opcoes=grupos),
+            ui.campo("Atualização", "periodo", valor=periodo,
+                     opcoes=[(k, v) for k, v in servicos.PERIODOS_RECURSO.items()]),
+            ui.campo("Ordenar por", "ordem", valor=ordem,
+                     opcoes=[(k, v) for k, v in servicos.ORDENACOES_RECURSO.items()]),
+            Div(
+                Button("Pesquisar", cls="btn", type="submit"),
+                A("Limpar", href="/recursos", cls="btn secundario"),
+                cls="acao",
+            ),
+            cls="filtros",
+        ),
+        Input(type="hidden", name="arquivados", value="1") if arquivados else None,
+        method="get",
+        action="/recursos",
+    )
+
+
 @rt("/recursos")
-def get(req):
-    """Biblioteca de documentos, formulários, normas e treinamentos."""
+def get(req, q: str = "", secao: str = "", grupo: str = "", periodo: str = "",
+        ordem: str = "recentes", arquivados: str = "", tudo: str = "",
+        ok: str = "", erro: str = ""):
+    """Biblioteca de documentos, formulários, normas, treinamentos e links."""
     usuario = eu(req)
-    return _em_construcao(
+    publica = _pode_publicar(req)
+    ver_arquivados = bool(arquivados) and publica
+
+    with db_session() as s:
+        ind = servicos.indicadores_recursos(s)
+        itens = servicos.buscar_recursos(
+            s, q, secao, grupo, periodo, ordem, incluir_arquivados=ver_arquivados
+        )
+        recentes = servicos.buscar_recursos(s, ordem="recentes")[:6]
+
+    filtrando = bool(q or secao or grupo or periodo or ver_arquivados or tudo)
+
+    cartoes_secao = Div(
+        *[
+            A(
+                Div(ICONE_SECAO.get(chave, "▣"), cls="ic"),
+                Div(
+                    H3(rotulo),
+                    P(DESCRICAO_SECAO.get(chave, "")),
+                    cls="txt",
+                ),
+                Span(str(ind["por_secao"].get(chave, 0)), cls="qtd"),
+                href=f"/recursos?secao={chave}",
+                cls="secao-item",
+            )
+            for chave, rotulo in SECOES_RECURSO.items()
+        ],
+        cls="secoes",
+    )
+
+    aviso_revisao = (
+        ui.alerta(
+            Span(
+                B(f"{len(ind['revisao_vencida'])} documento(s) com revisão vencida. "),
+                "Confira se ainda são a versão válida: ",
+                *[
+                    A(r.titulo, href=f"/recursos/{r.id}", style="margin-right:.6rem")
+                    for r in ind["revisao_vencida"][:5]
+                ],
+            ),
+            "aviso",
+        )
+        if publica and ind["revisao_vencida"]
+        else None
+    )
+
+    resumo = Div(
+        Span(B(str(ind["total"])), " documentos publicados"),
+        Span("•", cls="ponto"),
+        Span(B(str(ind["arquivos"])), " arquivos para download"),
+        Span("•", cls="ponto"),
+        Span(B(str(ind["links"])), " links úteis"),
+        cls="resumo-publico",
+    )
+
+    if filtrando:
+        corpo = Div(
+            Div(
+                H2("Resultado da pesquisa"),
+                Span(f"{len(itens)} documento(s)", cls="direita"),
+                cls="card-titulo",
+            ),
+            Div(*[_cartao_recurso(r) for r in itens], cls="docs")
+            if itens
+            else ui.vazio("Nenhum documento encontrado com esses filtros.", "⌕"),
+            cls="card",
+        )
+    else:
+        corpo = Div(
+            Div(
+                Div(H2("Categorias"), cls="card-titulo"),
+                cartoes_secao,
+                resumo,
+                cls="card",
+            ),
+            Div(
+                Div(
+                    H2("Atualizados recentemente"),
+                    A("Ver todos os documentos", href="/recursos?tudo=1", cls="direita"),
+                    cls="card-titulo",
+                ),
+                Div(*[_cartao_recurso(r) for r in recentes], cls="docs")
+                if recentes
+                else ui.vazio(
+                    "A biblioteca ainda não tem documentos publicados.", "▣"
+                ),
+                cls="card",
+            ),
+        )
+
+    acoes = []
+    if publica:
+        acoes.append(A("+ Publicar documento", href="/recursos/novo", cls="btn"))
+        acoes.append(
+            A(
+                "Ver ativos" if ver_arquivados else "Ver arquivados",
+                href="/recursos" if ver_arquivados else "/recursos?arquivados=1",
+                cls="btn secundario",
+            )
+        )
+
+    return ui.pagina(
         "Recursos e Documentos",
-        "Procedimentos, formulários, normas externas e material de treinamento",
-        "Biblioteca de documentos que não pertencem a um produto específico, "
-        "organizada em quatro seções, com download aberto a qualquer colaborador "
-        "da rede interna.",
-        [
-            Span(
-                B("Procedimentos e políticas internas"),
-                " - procedimentos de manuseio, políticas de SSMA, instruções de trabalho.",
-            ),
-            Span(
-                B("Formulários e modelos"),
-                " - planilhas e formulários em branco para download "
-                "(requisição, checklist de inspeção).",
-            ),
-            Span(
-                B("Links e normas externas"),
-                " - legislação e normas (ABNT, NRs, ANTT, CONAMA) e sites de "
-                "órgãos reguladores.",
-            ),
-            Span(
-                B("Treinamentos e material de apoio"),
-                " - apresentações, cartilhas e vídeos sobre manuseio de produtos químicos.",
-            ),
-        ],
-        [
-            "Tabela nova de documentos gerais, com seção, título, versão, "
-            "data de revisão e arquivo.",
-            "Tela de upload restrita (sugestão: Saúde e Segurança, Meio Ambiente e Admin).",
-            "Para a seção de links externos, guardar URL em vez de arquivo.",
-        ],
+        ui.alerta(ok, "sucesso") if ok else None,
+        ui.alerta(erro, "erro") if erro else None,
+        aviso_revisao,
+        Div(_filtros_recursos(q, secao, grupo, periodo, ordem, ver_arquivados), cls="card"),
+        corpo,
         usuario=usuario,
+        subtitulo="Procedimentos, etiquetas, formulários, normas, treinamentos e links úteis",
+        acoes=acoes or None,
+    )
+
+
+# --------------------------------------------------------- Detalhe
+@rt("/recursos/{rid:int}")
+def get(req, rid: int, ok: str = "", erro: str = ""):
+    usuario = eu(req)
+    publica = _pode_publicar(req)
+    with db_session() as s:
+        recurso = s.get(Recurso, rid)
+        if not recurso:
+            return ui.pagina(
+                "Documento não encontrado",
+                ui.alerta("Este documento não existe ou foi removido.", "erro"),
+                usuario=usuario,
+                voltar="/recursos",
+            )
+        atual = recurso.arquivo_atual
+        anteriores = recurso.versoes_anteriores
+
+    ficha = Div(
+        ui.item_ficha("Categoria", recurso.secao_label),
+        ui.item_ficha("Código do documento", recurso.codigo),
+        ui.item_ficha("Versão atual", f"v{recurso.versao_atual}"),
+        ui.item_ficha(
+            "Última revisão",
+            recurso.data_revisao.strftime("%d/%m/%Y") if recurso.data_revisao else None,
+        ),
+        ui.item_ficha(
+            "Próxima revisão",
+            Span(
+                recurso.proxima_revisao.strftime("%d/%m/%Y"),
+                Span(" (vencida)", cls="chip controlado vencida")
+                if recurso.revisao_vencida
+                else None,
+            )
+            if recurso.proxima_revisao
+            else None,
+        ),
+        ui.item_ficha("Criado em", recurso.criado_em.strftime("%d/%m/%Y")),
+        ui.item_ficha(
+            "Responsável pela atualização",
+            recurso.responsavel.nome if recurso.responsavel else None,
+        ),
+        ui.item_ficha("Downloads", str(recurso.downloads or 0)),
+        ui.item_ficha("Descrição", recurso.descricao, largo=True),
+        ui.item_ficha(
+            "Palavras-chave",
+            Div(
+                *[
+                    Span(p.strip(), cls="chip")
+                    for p in (recurso.palavras_chave or "").split(",")
+                    if p.strip()
+                ],
+                cls="tags",
+            )
+            if recurso.palavras_chave
+            else None,
+            largo=True,
+        ),
+        cls="ficha",
+    )
+
+    if recurso.e_link:
+        bloco_arquivo = Div(
+            Div(H2("Link"), cls="card-titulo"),
+            P(A(recurso.url, href=recurso.url, target="_blank", rel="noopener")),
+            A("Abrir link", href=recurso.url, target="_blank", rel="noopener", cls="btn"),
+            cls="card",
+        )
+    else:
+        bloco_arquivo = Div(
+            Div(
+                H2("Versão vigente"),
+                Span(f"v{recurso.versao_atual}", cls="direita"),
+                cls="card-titulo",
+            ),
+            Div(
+                _icone_recurso(recurso),
+                Div(
+                    Div(atual.nome_arquivo if atual else "-", cls="nome"),
+                    Div(
+                        f"{recurso.grupo_label} • {recurso.tamanho_legivel} • "
+                        f"enviado em {atual.enviado_em.strftime('%d/%m/%Y')}"
+                        if atual
+                        else "Nenhum arquivo enviado.",
+                        cls="meta",
+                    ),
+                    cls="info",
+                ),
+                A("Baixar", href=f"/recursos/{recurso.id}/arquivo", cls="btn"),
+                cls="doc",
+            )
+            if atual
+            else ui.vazio("Nenhum arquivo enviado para este item.", "▣"),
+            cls="card",
+        )
+
+    historico = Div(
+        Div(
+            H2("Histórico de versões"),
+            Span(f"{len(recurso.arquivos)} versão(ões)", cls="direita"),
+            cls="card-titulo",
+        ),
+        Div(
+            Table(
+                Thead(
+                    Tr(Th("Versão"), Th("Arquivo"), Th("Revisão"), Th("Responsável"),
+                       Th("Enviado em"), Th("Alterações"), Th(""))
+                ),
+                Tbody(
+                    *[
+                        Tr(
+                            Td(f"v{a.versao}", cls="mono nowrap"),
+                            Td(a.nome_arquivo, cls="pequeno"),
+                            Td(
+                                a.data_revisao.strftime("%d/%m/%Y") if a.data_revisao else "-",
+                                cls="pequeno nowrap",
+                            ),
+                            Td(a.enviado_por.nome if a.enviado_por else "-", cls="pequeno"),
+                            Td(a.enviado_em.strftime("%d/%m/%Y %H:%M"), cls="pequeno nowrap"),
+                            Td(a.notas or "-", cls="pequeno"),
+                            Td(
+                                A("Baixar", href=f"/recursos/arquivo/{a.id}",
+                                  cls="btn pequeno secundario")
+                            ),
+                        )
+                        for a in recurso.arquivos
+                    ]
+                ),
+                cls="dados",
+            ),
+            style="overflow-x:auto",
+        )
+        if recurso.arquivos
+        else ui.vazio("Sem versões registradas.", "⏱"),
+        cls="card",
+    )
+
+    painel_gestao = None
+    if publica:
+        form_versao = (
+            Form(
+                P(
+                    "Ao enviar um arquivo novo, a versão atual passa a ser a "
+                    f"v{(recurso.versao_atual or 0) + 1} e a anterior continua "
+                    "disponível no histórico.",
+                    cls="pequeno texto-mudo",
+                ),
+                Label(
+                    Span("Arquivo da nova versão", Span(" *", cls="obr"), cls="rot"),
+                    Input(type="file", name="arquivo", required=True),
+                    cls="campo",
+                ),
+                ui.campo("Data da revisão", "data_revisao", "date",
+                         date.today().isoformat()),
+                ui.campo("O que mudou nesta versão", "notas", linhas=2,
+                         placeholder="Ex.: atualização do item 7 - armazenamento"),
+                Button("Publicar nova versão", cls="btn verde", type="submit"),
+                method="post",
+                action=f"/recursos/{recurso.id}/versao",
+                enctype="multipart/form-data",
+            )
+            if not recurso.e_link
+            else P(
+                "Itens do tipo link não têm versões de arquivo. Use 'Editar' para "
+                "trocar o endereço.",
+                cls="pequeno texto-mudo",
+            )
+        )
+        painel_gestao = Div(
+            Div(H2("Gestão do documento"), cls="card-titulo"),
+            Div(
+                A("Editar dados", href=f"/recursos/{recurso.id}/editar",
+                  cls="btn secundario"),
+                Form(
+                    Button(
+                        "Restaurar" if not recurso.ativo else "Arquivar",
+                        cls="btn secundario" if not recurso.ativo else "btn vermelho",
+                        type="submit",
+                    ),
+                    Input(type="hidden", name="ativo", value="1" if not recurso.ativo else "0"),
+                    method="post",
+                    action=f"/recursos/{recurso.id}/situacao",
+                    style="display:inline",
+                ),
+                cls="barra-acoes",
+            ),
+            Hr(style="border:0;border-top:1px solid var(--cinza-fundo);margin:1.1rem 0"),
+            H3("Nova versão"),
+            form_versao,
+            cls="card",
+        )
+
+    return ui.pagina(
+        recurso.titulo,
+        ui.alerta(ok, "sucesso") if ok else None,
+        ui.alerta(erro, "erro") if erro else None,
+        ui.alerta("Este documento está arquivado e não aparece na busca.", "aviso")
+        if not recurso.ativo
+        else None,
+        Div(
+            Div(
+                Div(Div(H2("Ficha do documento"), cls="card-titulo"), ficha, cls="card"),
+                bloco_arquivo,
+                historico,
+            ),
+            Div(
+                Div(
+                    Div(H2("Identificação"), cls="card-titulo"),
+                    _chips_recurso(recurso),
+                    P(
+                        "Consulta e download liberados a todos os colaboradores.",
+                        cls="pequeno texto-mudo",
+                        style="margin-top:.8rem",
+                    ),
+                    cls="card",
+                ),
+                painel_gestao,
+            ),
+            cls="grade",
+            style="grid-template-columns:minmax(0,1.7fr) minmax(280px,1fr)",
+        ),
+        usuario=usuario,
+        subtitulo=f"{recurso.secao_label} • versão {recurso.versao_atual}",
+        acoes=[A("‹ Biblioteca", href="/recursos", cls="btn secundario")],
+    )
+
+
+# --------------------------------------------------------- Downloads
+def _entregar(conteudo, nome, tipo):
+    return Response(
+        conteudo,
+        media_type=tipo or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{nome}"'},
+    )
+
+
+@rt("/recursos/{rid:int}/arquivo")
+def get(rid: int):
+    """Baixa a versão vigente. Aberto a qualquer colaborador."""
+    with db_session() as s:
+        recurso = s.get(Recurso, rid)
+        if not recurso:
+            return Response("Documento não encontrado", status_code=404)
+        if recurso.e_link and recurso.url:
+            return RedirectResponse(recurso.url, status_code=303)
+        atual = recurso.arquivo_atual
+        if not atual:
+            return Response("Este documento não tem arquivo anexado.", status_code=404)
+        servicos.registrar_download(s, recurso)
+        dados = (atual.conteudo, atual.nome_arquivo, atual.content_type)
+    return _entregar(*dados)
+
+
+@rt("/recursos/arquivo/{aid:int}")
+def get(aid: int):
+    """Baixa uma versão específica do histórico."""
+    with db_session() as s:
+        arquivo = s.get(RecursoArquivo, aid)
+        if not arquivo:
+            return Response("Versão não encontrada", status_code=404)
+        dados = (arquivo.conteudo, arquivo.nome_arquivo, arquivo.content_type)
+    return _entregar(*dados)
+
+
+# --------------------------------------------------------- Publicação
+def _form_recurso(recurso=None, erro: str = ""):
+    """Formulário usado tanto para publicar quanto para editar."""
+    novo = recurso is None
+    valor = (lambda campo, padrao="": getattr(recurso, campo, padrao) or padrao) \
+        if recurso else (lambda campo, padrao="": padrao)
+    acao = "/recursos/novo" if novo else f"/recursos/{recurso.id}/editar"
+    return Form(
+        Fieldset(
+            Legend("Identificação"),
+            Div(
+                ui.campo("Categoria", "secao", valor=valor("secao", "PROCEDIMENTOS"),
+                         obrigatório=True,
+                         opcoes=[(k, v) for k, v in SECOES_RECURSO.items()]),
+                ui.campo("Tipo", "tipo_midia", valor=valor("tipo_midia", "ARQUIVO"),
+                         obrigatório=True,
+                         opcoes=[(k, v) for k, v in TIPOS_MIDIA.items()],
+                         ajuda="Arquivo para download ou atalho para um sistema/site."),
+                cls="linha-form",
+            ),
+            Div(
+                ui.campo("Título", "titulo", valor=valor("titulo"), obrigatório=True,
+                         placeholder="Ex.: Etiqueta GHS - recipiente de 5 L"),
+                ui.campo("Código do documento", "codigo", valor=valor("codigo"),
+                         placeholder="Ex.: PR-HSE-012", ajuda="Opcional."),
+                cls="linha-form",
+            ),
+            ui.campo("Descrição", "descricao", valor=valor("descricao"), linhas=2,
+                     ajuda="Explique em uma ou duas linhas para que serve o documento."),
+            ui.campo("Palavras-chave", "palavras_chave", valor=valor("palavras_chave"),
+                     placeholder="etiqueta, GHS, rotulagem, armazenamento",
+                     ajuda="Separadas por vírgula. Usadas na pesquisa."),
+            cls="secao",
+        ),
+        Fieldset(
+            Legend("Conteúdo"),
+            ui.campo("Endereço (URL)", "url", valor=valor("url"),
+                     placeholder="https://...",
+                     ajuda="Preencha apenas quando o tipo for 'Link externo'."),
+            Label(
+                Span("Arquivo", cls="rot"),
+                Input(type="file", name="arquivo"),
+                Span(
+                    "Obrigatório para documentos. "
+                    + ("Deixe em branco para manter o arquivo atual."
+                       if not novo else f"Até {config.MAX_UPLOAD_MB} MB."),
+                    cls="ajuda",
+                ),
+                cls="campo",
+            )
+            if novo
+            else None,
+            cls="secao",
+        ),
+        Fieldset(
+            Legend("Controle de versão"),
+            Div(
+                ui.campo("Data da revisão", "data_revisao", "date",
+                         (recurso.data_revisao.isoformat()
+                          if recurso and recurso.data_revisao else date.today().isoformat())),
+                ui.campo("Próxima revisão prevista", "proxima_revisao", "date",
+                         (recurso.proxima_revisao.isoformat()
+                          if recurso and recurso.proxima_revisao else ""),
+                         ajuda="Opcional. O sistema avisa quando a data passar."),
+                cls="linha-form",
+            ),
+            cls="secao",
+        ),
+        Div(
+            Button("Publicar" if novo else "Salvar alterações", cls="btn verde",
+                   type="submit"),
+            A("Cancelar", href="/recursos" if novo else f"/recursos/{recurso.id}",
+              cls="btn secundario"),
+            cls="barra-acoes",
+        ),
+        method="post",
+        action=acao,
+        enctype="multipart/form-data",
+    )
+
+
+@rt("/recursos/novo")
+def get(req, erro: str = ""):
+    barrado = exigir_papel(req, *servicos.PAPEIS_BIBLIOTECA)
+    if barrado:
+        return barrado
+    return ui.pagina(
+        "Publicar documento",
+        ui.alerta(erro, "erro") if erro else None,
+        Div(
+            Div(H2("Novo item da biblioteca"), cls="card-titulo"),
+            _form_recurso(),
+            cls="card",
+        ),
+        usuario=eu(req),
+        subtitulo="O documento fica disponível para consulta de todos os colaboradores",
+        acoes=[A("‹ Biblioteca", href="/recursos", cls="btn secundario")],
+    )
+
+
+async def _arquivo_do_form(form) -> tuple[dict | None, str | None]:
+    enviado = form.get("arquivo")
+    if enviado is None or not getattr(enviado, "filename", ""):
+        return None, None
+    conteudo = await enviado.read()
+    if not conteudo:
+        return None, None
+    if len(conteudo) > config.MAX_UPLOAD_BYTES:
+        return None, f"O arquivo excede o limite de {config.MAX_UPLOAD_MB} MB."
+    return {
+        "nome": enviado.filename,
+        "content_type": getattr(enviado, "content_type", None),
+        "conteudo": conteudo,
+    }, None
+
+
+def _dados_do_form(form) -> dict:
+    return {
+        "secao": (form.get("secao") or "").strip(),
+        "titulo": (form.get("titulo") or "").strip(),
+        "codigo": (form.get("codigo") or "").strip(),
+        "descricao": (form.get("descricao") or "").strip(),
+        "palavras_chave": (form.get("palavras_chave") or "").strip(),
+        "tipo_midia": (form.get("tipo_midia") or "ARQUIVO").strip(),
+        "url": (form.get("url") or "").strip(),
+        "data_revisao": _data(form.get("data_revisao")),
+        "proxima_revisao": _data(form.get("proxima_revisao")),
+        "notas": (form.get("notas") or "").strip(),
+    }
+
+
+@rt("/recursos/novo")
+async def post(req):
+    barrado = exigir_papel(req, *servicos.PAPEIS_BIBLIOTECA)
+    if barrado:
+        return barrado
+    usuario = eu(req)
+    form = await req.form()
+    dados = _dados_do_form(form)
+
+    if not dados["titulo"] or dados["secao"] not in SECOES_RECURSO:
+        return RedirectResponse(
+            _msg("/recursos/novo", "erro", "Informe o título e a categoria."),
+            status_code=303,
+        )
+
+    arquivo, erro = await _arquivo_do_form(form)
+    if erro:
+        return RedirectResponse(_msg("/recursos/novo", "erro", erro), status_code=303)
+
+    if dados["tipo_midia"] == "LINK":
+        if not dados["url"]:
+            return RedirectResponse(
+                _msg("/recursos/novo", "erro",
+                     "Informe o endereço (URL) do link externo."),
+                status_code=303,
+            )
+        arquivo = None
+    elif arquivo is None:
+        return RedirectResponse(
+            _msg("/recursos/novo", "erro",
+                 "Selecione o arquivo do documento (ou mude o tipo para 'Link externo')."),
+            status_code=303,
+        )
+
+    with db_session() as s:
+        recurso = servicos.criar_recurso(s, dados, s.get(Usuario, usuario.id), arquivo)
+        rid = recurso.id
+    return RedirectResponse(
+        _msg(f"/recursos/{rid}", "ok", "Documento publicado na biblioteca."),
+        status_code=303,
+    )
+
+
+@rt("/recursos/{rid:int}/editar")
+def get(req, rid: int, erro: str = ""):
+    barrado = exigir_papel(req, *servicos.PAPEIS_BIBLIOTECA)
+    if barrado:
+        return barrado
+    with db_session() as s:
+        recurso = s.get(Recurso, rid)
+    if not recurso:
+        return RedirectResponse(
+            _msg("/recursos", "erro", "Documento não encontrado."), status_code=303
+        )
+    return ui.pagina(
+        f"Editar: {recurso.titulo}",
+        ui.alerta(erro, "erro") if erro else None,
+        ui.alerta(
+            "Alterar os dados aqui não cria versão nova. Para substituir o arquivo, "
+            "use 'Publicar nova versão' na página do documento.",
+            "info",
+        ),
+        Div(
+            Div(H2("Dados do documento"), cls="card-titulo"),
+            _form_recurso(recurso),
+            cls="card",
+        ),
+        usuario=eu(req),
+        subtitulo=recurso.secao_label,
+        acoes=[A("‹ Voltar ao documento", href=f"/recursos/{rid}", cls="btn secundario")],
+    )
+
+
+@rt("/recursos/{rid:int}/editar")
+async def post(req, rid: int):
+    barrado = exigir_papel(req, *servicos.PAPEIS_BIBLIOTECA)
+    if barrado:
+        return barrado
+    usuario = eu(req)
+    form = await req.form()
+    dados = _dados_do_form(form)
+    if not dados["titulo"]:
+        return RedirectResponse(
+            _msg(f"/recursos/{rid}/editar", "erro", "O título é obrigatório."),
+            status_code=303,
+        )
+    with db_session() as s:
+        recurso = s.get(Recurso, rid)
+        if not recurso:
+            return RedirectResponse(
+                _msg("/recursos", "erro", "Documento não encontrado."), status_code=303
+            )
+        servicos.atualizar_recurso(s, recurso, dados, s.get(Usuario, usuario.id))
+    return RedirectResponse(
+        _msg(f"/recursos/{rid}", "ok", "Dados atualizados."), status_code=303
+    )
+
+
+@rt("/recursos/{rid:int}/versao")
+async def post(req, rid: int):
+    barrado = exigir_papel(req, *servicos.PAPEIS_BIBLIOTECA)
+    if barrado:
+        return barrado
+    usuario = eu(req)
+    form = await req.form()
+    arquivo, erro = await _arquivo_do_form(form)
+    if erro or arquivo is None:
+        return RedirectResponse(
+            _msg(f"/recursos/{rid}", "erro", erro or "Selecione o arquivo da nova versão."),
+            status_code=303,
+        )
+    with db_session() as s:
+        recurso = s.get(Recurso, rid)
+        if not recurso:
+            return RedirectResponse(
+                _msg("/recursos", "erro", "Documento não encontrado."), status_code=303
+            )
+        servicos.publicar_versao(
+            s,
+            recurso,
+            arquivo,
+            s.get(Usuario, usuario.id),
+            data_revisao=_data(form.get("data_revisao")) or date.today(),
+            notas=(form.get("notas") or "").strip() or None,
+        )
+        nova = recurso.versao_atual
+    return RedirectResponse(
+        _msg(f"/recursos/{rid}", "ok", f"Versão v{nova} publicada."), status_code=303
+    )
+
+
+@rt("/recursos/{rid:int}/situacao")
+async def post(req, rid: int):
+    barrado = exigir_papel(req, *servicos.PAPEIS_BIBLIOTECA)
+    if barrado:
+        return barrado
+    usuario = eu(req)
+    form = await req.form()
+    ativo = (form.get("ativo") or "0") == "1"
+    with db_session() as s:
+        recurso = s.get(Recurso, rid)
+        if not recurso:
+            return RedirectResponse(
+                _msg("/recursos", "erro", "Documento não encontrado."), status_code=303
+            )
+        servicos.arquivar_recurso(s, recurso, s.get(Usuario, usuario.id), ativo)
+    return RedirectResponse(
+        _msg(f"/recursos/{rid}", "ok",
+             "Documento restaurado." if ativo else "Documento arquivado."),
+        status_code=303,
     )
 
 
@@ -1697,7 +2597,10 @@ def get(req, pid: int, ok: str = "", erro: str = ""):
                 usuario=usuario,
             )
         u_atual = None if publico else s.get(Usuario, usuario.id)
-        pode = False if publico else servicos.pode_decidir(u_atual, produto)
+        areas_permitidas = (
+            [] if publico else servicos.areas_para_decidir(s, u_atual, produto)
+        )
+        pode = bool(areas_permitidas)
         pode_reenviar = False if publico else servicos.pode_corrigir(u_atual, produto)
         obs = [] if publico else servicos.observacoes(s, pid)
         eventos = (
@@ -1772,8 +2675,18 @@ def get(req, pid: int, ok: str = "", erro: str = ""):
         cls="ficha",
     )
 
+    rotulos_areas = dict(FLUXO_APROVACAO)
     form_decisao = (
         Form(
+            # Quem responde por mais de uma área escolhe por qual está opinando.
+            ui.campo(
+                "Registrar parecer como", "area", valor=areas_permitidas[0],
+                obrigatório=True,
+                opcoes=[(a, rotulos_areas.get(a, a)) for a in areas_permitidas],
+            )
+            if len(areas_permitidas) > 1
+            else Input(type="hidden", name="area",
+                       value=areas_permitidas[0] if areas_permitidas else ""),
             ui.campo(
                 "Parecer técnico",
                 "parecer",
@@ -1786,7 +2699,7 @@ def get(req, pid: int, ok: str = "", erro: str = ""):
                 ajuda="Só é usado quando a decisão é reprovar.",
             ),
             Div(
-                Button("Aprovar etapa", cls="btn verde", type="submit", name="decisao",
+                Button("Aprovar", cls="btn verde", type="submit", name="decisao",
                        value="APROVADO"),
                 Button("Reprovar", cls="btn vermelho", type="submit", name="decisao",
                        value="REPROVADO"),
@@ -2062,8 +2975,8 @@ def get(req, pid: int, ok: str = "", erro: str = ""):
             Div(H2("Registrar parecer"), cls="card-titulo"),
             form_decisao
             or P(
-                "Você não é o responsável pela etapa atual desta solicitação."
-                if produto.status == "EM_ANALISE"
+                "Você não responde por nenhuma área pendente desta solicitação."
+                if produto.aberta
                 else f"Solicitação encerrada com status: {produto.status_label}.",
                 cls="texto-mudo pequeno",
             ),
@@ -2357,15 +3270,30 @@ async def post(req, pid: int):
                 status_code=303,
             )
         parecer = f"[{motivo}] {parecer}"
+    area = (form.get("area") or "").strip() or None
     with db_session() as s:
         produto = s.get(Produto, pid)
         u = s.get(Usuario, usuario.id)
-        if not produto or not servicos.pode_decidir(u, produto):
+        permitidas = servicos.areas_para_decidir(s, u, produto) if produto else []
+        if not permitidas:
             return RedirectResponse(
-                f"/produtos/{pid}?erro=Você+não+pode+decidir+esta+etapa.", status_code=303
+                _msg(f"/produtos/{pid}", "erro",
+                     "Você não responde por nenhuma área pendente desta solicitação."),
+                status_code=303,
             )
-        servicos.registrar_decisao(s, produto, u, decisao, parecer)
-    return RedirectResponse(f"/produtos/{pid}?ok=Parecer+registrado.", status_code=303)
+        if area not in permitidas:
+            area = permitidas[0] if len(permitidas) == 1 else None
+        if area is None:
+            return RedirectResponse(
+                _msg(f"/produtos/{pid}", "erro", "Escolha por qual área está opinando."),
+                status_code=303,
+            )
+        servicos.registrar_decisao(s, produto, u, decisao, parecer, area=area)
+        rotulo = dict(FLUXO_APROVACAO).get(area, area)
+    return RedirectResponse(
+        _msg(f"/produtos/{pid}", "ok", f"Parecer de {rotulo} registrado."),
+        status_code=303,
+    )
 
 
 @rt("/produtos/{pid}/correcao")
@@ -2385,10 +3313,10 @@ async def post(req, pid: int):
     with db_session() as s:
         produto = s.get(Produto, pid)
         u = s.get(Usuario, usuario.id)
-        if not produto or not servicos.pode_decidir(u, produto):
+        if not produto or not servicos.pode_decidir(s, u, produto):
             return RedirectResponse(
                 _msg(f"/produtos/{pid}", "erro",
-                     "Você não é o responsável pela etapa atual desta solicitação."),
+                     "Você não responde por nenhuma área pendente desta solicitação."),
                 status_code=303,
             )
         servicos.solicitar_correcao(s, produto, u, motivo)
@@ -2700,12 +3628,6 @@ def get(req, q: str = "", fabrica: str = "", tipo_produto: str = "",
             href="/fds?situacao=VENCIDA",
             cls="kpi-fds",
         ),
-        A(
-            Div(str(resumo["SEM_FDS"]), cls="valor"),
-            Div(_pontos_semaforo("SEM_FDS", "Sem FDS"), cls="rotulo"),
-            href="/fds?situacao=SEM_FDS",
-            cls="kpi-fds",
-        ),
         cls="painel-fds",
     )
 
@@ -2998,6 +3920,39 @@ def get(did: int):
 # =====================================================================
 
 criar_tabelas()
+
+
+# =====================================================================
+# Cobrança automática (lembretes de 7 em 7 dias)
+# =====================================================================
+
+
+def _rotina_lembretes():
+    """Verifica as solicitações paradas ao subir e a cada 12 horas.
+
+    Quem preferir controlar pelo Agendador de Tarefas do Windows pode
+    desligar com LEMBRETES_ATIVOS=0 no .env e chamar `lembretes.py`.
+    """
+    import threading
+    import time as _time
+
+    def laco():
+        _time.sleep(20)  # deixa o servidor terminar de subir
+        while True:
+            try:
+                with db_session() as s:
+                    enviados = servicos.enviar_lembretes(s, config.LEMBRETE_DIAS)
+                if enviados:
+                    print(f"[lembretes] {enviados} solicitação(ões) cobrada(s).")
+            except Exception as exc:  # pragma: no cover
+                print(f"[lembretes] falha ao verificar: {exc}")
+            _time.sleep(12 * 60 * 60)
+
+    threading.Thread(target=laco, daemon=True, name="lembretes").start()
+
+
+if config.LEMBRETES_ATIVOS:
+    _rotina_lembretes()
 
 if __name__ == "__main__":
     print("=" * 62)
