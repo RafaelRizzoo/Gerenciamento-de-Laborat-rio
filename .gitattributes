@@ -8,3 +8,6 @@
 Dockerfile      text eol=lf
 docker-entrypoint.sh text eol=lf
 *.yml           text eol=lf
+# Os .bat rodam no cmd.exe do Windows: precisam de CRLF.
+*.bat           text eol=crlf
+*.cmd           text eol=crlf

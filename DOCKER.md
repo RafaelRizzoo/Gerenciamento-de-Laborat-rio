@@ -27,7 +27,9 @@ Pode apagar antes, se quiser deixar a cópia mais leve:
 
 ## 3. Subir a aplicação
 
-Abra o PowerShell (ou o Terminal) **dentro da pasta do projeto** e rode:
+Duplo clique em **`recreate.bat`**, dentro da pasta do projeto.
+
+Quem preferir digitar, o equivalente é abrir o PowerShell na pasta e rodar:
 
 ```powershell
 docker compose up -d --build
@@ -42,6 +44,35 @@ Login de teste: `rafael.rizzo@tenaris.com` / `tenaris123`
 (a lista completa aparece no terminal com `docker compose logs app`).
 
 ---
+
+## O atalho: recreate.bat
+
+Na pasta existe um arquivo só, o **`recreate.bat`**. Duplo clique nele e
+pronto — é o que ela executa toda vez que o código mudar.
+
+O que ele faz, nesta ordem:
+
+1. confere se o Docker Desktop está aberto (e avisa, se não estiver);
+2. `git pull` — baixa o código novo do GitHub (se a pasta veio de um clone);
+3. derruba o contêiner antigo e reconstrói a imagem;
+4. sobe, espera a aplicação responder e abre o navegador.
+
+**O banco não é apagado**: ele fica num volume do Docker, fora do
+contêiner, e sobrevive a qualquer recriação.
+
+O mesmo arquivo atende o resto do dia a dia, pelo terminal:
+
+| Comando | Para quê |
+|---|---|
+| `recreate.bat` | Atualiza e recria (duplo clique faz isso) |
+| `recreate.bat parar` | Para a aplicação |
+| `recreate.bat logs` | Mostra o que a aplicação está fazendo |
+| `recreate.bat backup` | Salva uma cópia do banco nesta pasta, com a data no nome |
+| `recreate.bat zerar` | Apaga o banco e recomeça com os dados de exemplo (pede confirmação) |
+
+Se a pasta veio de um ZIP em vez de `git clone`, o passo do `git pull` é
+pulado com um aviso e ele reconstrói com o código que estiver ali — nesse
+caso, baixe o ZIP novo antes de rodar.
 
 ## Comandos do dia a dia
 
