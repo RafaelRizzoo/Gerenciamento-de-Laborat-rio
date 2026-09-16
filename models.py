@@ -125,6 +125,26 @@ DOCUMENTOS_OBRIGATORIOS = ["FDS"]
 
 ESTADOS_FISICOS = ["Sólido", "Líquido", "Gás", "Pasta / Gel", "Aerossol"]
 
+# Respostas objetivas: no formulário aparecem como lista suspensa, para
+# ninguém digitar "sim", "SIM", "s" ou "afirmativo".
+SIM_NAO = {"SIM": "Sim", "NAO": "Não"}
+
+# Por quanto tempo o produto será usado na planta.
+PRAZOS_UTILIZACAO = [
+    "Uso único / pontual",
+    "Até 6 meses",
+    "De 6 a 12 meses",
+    "De 1 a 2 anos",
+    "Acima de 2 anos",
+    "Uso contínuo (sem prazo definido)",
+]
+
+# Unidade da quantidade prevista de consumo.
+UNIDADES_CONSUMO = [
+    "L/mês", "mL/mês", "kg/mês", "g/mês", "t/mês",
+    "L/ano", "kg/ano", "un/mês", "un/ano",
+]
+
 # ---------------------------------------------------------------------
 # Módulo de consulta de FDS
 # ---------------------------------------------------------------------
@@ -244,6 +264,14 @@ class Produto(Base):
     area_solicitante: Mapped[str | None] = mapped_column(Unicode(60), nullable=True)
     prazo_utilizacao: Mapped[str | None] = mapped_column(Unicode(80), nullable=True)
     aplicacao: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
+    # Por que a planta precisa deste produto (pergunta pedida pela Tenaris).
+    necessidade_uso: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
+    motivo_desenvolvimento: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
+    # Exposição dos colaboradores - usado por Saúde e Segurança na análise.
+    funcionarios_expostos: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    funcoes_expostas: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
+    # Quem pediu, quando a solicitação vem de empresa terceira.
+    solicitante_terceiro: Mapped[str | None] = mapped_column(Unicode(160), nullable=True)
     processo: Mapped[str | None] = mapped_column(Unicode(180), nullable=True)
     consumo_estimado: Mapped[str | None] = mapped_column(Unicode(60), nullable=True)
     unidade: Mapped[str | None] = mapped_column(Unicode(20), nullable=True)
@@ -251,6 +279,9 @@ class Produto(Base):
 
     # Segurança / meio ambiente
     classificacao_ghs: Mapped[str | None] = mapped_column(Unicode(255), nullable=True)
+    inflamavel: Mapped[str | None] = mapped_column(Unicode(10), nullable=True)
+    cancerigeno: Mapped[str | None] = mapped_column(Unicode(10), nullable=True)
+    ponto_fulgor: Mapped[str | None] = mapped_column(Unicode(60), nullable=True)
     onu_numero: Mapped[str | None] = mapped_column(Unicode(30), nullable=True)
     epi_recomendado: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
     restricoes_uso: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
@@ -306,6 +337,20 @@ class Produto(Base):
     @property
     def status_label(self) -> str:
         return STATUS.get(self.status, self.status)
+
+    @property
+    def inflamavel_label(self) -> str | None:
+        return SIM_NAO.get(self.inflamavel) if self.inflamavel else None
+
+    @property
+    def cancerigeno_label(self) -> str | None:
+        return SIM_NAO.get(self.cancerigeno) if self.cancerigeno else None
+
+    @property
+    def expostos_label(self) -> str | None:
+        if self.funcionarios_expostos is None:
+            return None
+        return f"{self.funcionarios_expostos} colaborador(es)"
 
     @property
     def etapa_label(self) -> str | None:
@@ -883,3 +928,131 @@ class RecursoArquivo(Base):
         if "." not in self.nome_arquivo:
             return "DOC"
         return self.nome_arquivo.rsplit(".", 1)[-1].upper()[:4]
+
+
+# =====================================================================
+# Kit Ambiental (informativo: o que cada kit tem e onde encontrar)
+# =====================================================================
+
+# Perfis que mantêm os kits e os pontos de coleta.
+PAPEIS_KIT = ("MEIO_AMBIENTE", "SEGURANCA", "ADMIN")
+
+# Unidades usadas na quantidade de cada item do kit.
+UNIDADES_ITEM = ["un", "par", "kg", "L", "m", "rolo", "caixa", "saco", "pacote"]
+
+
+class KitAmbiental(Base):
+    """Um tipo de kit (Kit A, Kit B, ...).
+
+    A composição é definida por TIPO e vale para toda a Tenaris: as
+    fábricas apenas informam quantos kits têm e onde eles ficam.
+    """
+
+    __tablename__ = "kits_ambientais"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    codigo: Mapped[str] = mapped_column(Unicode(20), nullable=False, unique=True)
+    nome: Mapped[str] = mapped_column(Unicode(120), nullable=False)
+    utilidade: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
+    quando_usar: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
+    ordem: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    atualizado_em: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, onupdate=datetime.now
+    )
+    atualizado_por_id: Mapped[int | None] = mapped_column(
+        ForeignKey("usuarios.id"), nullable=True
+    )
+
+    atualizado_por: Mapped["Usuario | None"] = relationship(lazy="joined")
+    itens: Mapped[list["ItemKit"]] = relationship(
+        back_populates="kit",
+        cascade="all, delete-orphan",
+        order_by="ItemKit.ordem, ItemKit.id",
+        lazy="selectin",
+    )
+    pontos: Mapped[list["PontoColetaKit"]] = relationship(
+        back_populates="kit",
+        cascade="all, delete-orphan",
+        order_by="PontoColetaKit.fabrica, PontoColetaKit.local",
+        lazy="selectin",
+    )
+
+    @property
+    def itens_ativos(self) -> list["ItemKit"]:
+        return [i for i in self.itens if i.ativo]
+
+    @property
+    def pontos_ativos(self) -> list["PontoColetaKit"]:
+        return [p for p in self.pontos if p.ativo]
+
+    @property
+    def fabricas(self) -> list[str]:
+        """Fábricas que têm pelo menos um kit deste tipo."""
+        vistas = []
+        for ponto in self.pontos_ativos:
+            if ponto.fabrica not in vistas:
+                vistas.append(ponto.fabrica)
+        return vistas
+
+    @property
+    def sem_composicao(self) -> bool:
+        return not self.itens_ativos
+
+
+class ItemKit(Base):
+    """Um item que compõe o kit, com quantidade, utilidade e foto."""
+
+    __tablename__ = "kit_itens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kit_id: Mapped[int] = mapped_column(ForeignKey("kits_ambientais.id"), nullable=False)
+    nome: Mapped[str] = mapped_column(Unicode(160), nullable=False)
+    utilidade: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
+    quantidade: Mapped[str | None] = mapped_column(Unicode(30), nullable=True)
+    unidade: Mapped[str | None] = mapped_column(Unicode(20), nullable=True)
+    # Quando o item é um produto químico já cadastrado, o vínculo dá
+    # acesso direto à FDS dele.
+    produto_id: Mapped[int | None] = mapped_column(ForeignKey("produtos.id"), nullable=True)
+    foto: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    foto_tipo: Mapped[str | None] = mapped_column(Unicode(60), nullable=True)
+    ordem: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    kit: Mapped["KitAmbiental"] = relationship(back_populates="itens")
+    produto: Mapped["Produto | None"] = relationship(lazy="joined")
+
+    @property
+    def tem_foto(self) -> bool:
+        return bool(self.foto)
+
+    @property
+    def quantidade_label(self) -> str:
+        if not self.quantidade:
+            return "-"
+        return f"{self.quantidade} {self.unidade or ''}".strip()
+
+
+class PontoColetaKit(Base):
+    """Onde um kit de determinado tipo pode ser encontrado."""
+
+    __tablename__ = "kit_pontos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kit_id: Mapped[int] = mapped_column(ForeignKey("kits_ambientais.id"), nullable=False)
+    fabrica: Mapped[str] = mapped_column(Unicode(60), nullable=False)
+    local: Mapped[str] = mapped_column(Unicode(200), nullable=False)
+    responsavel: Mapped[str | None] = mapped_column(Unicode(120), nullable=True)
+    ramal: Mapped[str | None] = mapped_column(Unicode(40), nullable=True)
+    observacoes: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
+    ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    kit: Mapped["KitAmbiental"] = relationship(back_populates="pontos")
+
+    @property
+    def contato(self) -> str | None:
+        if self.responsavel and self.ramal:
+            return f"{self.responsavel} - ramal {self.ramal}"
+        return self.responsavel or (f"Ramal {self.ramal}" if self.ramal else None)

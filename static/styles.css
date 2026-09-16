@@ -941,3 +941,82 @@ tr.minha-etapa > td:first-child { box-shadow: inset 3px 0 0 var(--azul); }
 .kpi-inicio.verde { border-top-color: var(--verde); }
 .kpi-inicio.ambar { border-top-color: var(--ambar); }
 .kpi-inicio.vermelho { border-top-color: var(--vermelho); }
+
+/* =====================================================================
+   Kit Ambiental
+   ===================================================================== */
+.kits-grade {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem;
+}
+.kit-card {
+  border: 1px solid var(--cinza-claro); border-radius: var(--raio);
+  background: var(--branco); padding: 1rem 1.1rem; box-shadow: var(--sombra);
+  display: flex; flex-direction: column; gap: .7rem;
+}
+.kit-topo { display: flex; gap: .9rem; align-items: flex-start; }
+.kit-topo .txt { min-width: 0; }
+.kit-topo h2, .kit-topo h3 { margin: 0 0 .25rem; }
+.kit-topo p { margin: 0; font-size: .86rem; line-height: 1.5; color: var(--cinza-escuro); }
+.selo {
+  flex: 0 0 auto; align-self: flex-start;
+  background: var(--verde-suave); color: #00784a;
+  border: 1px solid var(--verde); border-radius: var(--raio);
+  font-weight: 700; font-size: .8rem; letter-spacing: .04em;
+  padding: .35rem .6rem; white-space: nowrap;
+}
+.selo.grande { font-size: 1rem; padding: .5rem .8rem; }
+.kit-card .barra-acoes { margin-top: auto; padding-top: .8rem; }
+
+.itens-kit {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: .8rem;
+}
+.item-kit {
+  display: flex; gap: .85rem; align-items: flex-start;
+  border: 1px solid var(--cinza-claro); border-radius: var(--raio);
+  padding: .8rem; background: var(--branco);
+}
+.item-foto {
+  flex: 0 0 86px; width: 86px; height: 86px;
+  border-radius: var(--raio); overflow: hidden;
+  background: var(--cinza-fundo); display: grid; place-items: center;
+}
+.item-foto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.item-foto .sem-foto {
+  font-size: .7rem; color: var(--cinza-medio); text-align: center; padding: .3rem;
+}
+.item-txt { min-width: 0; flex: 1 1 auto; }
+.item-nome { display: flex; align-items: center; gap: .45rem; flex-wrap: wrap; }
+.item-uso {
+  margin: .3rem 0 .45rem; font-size: .84rem; line-height: 1.45; color: var(--cinza-escuro);
+}
+.item-acoes { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+
+.fabricas { display: grid; gap: 1.1rem; }
+.fabrica-bloco { border: 1px solid var(--cinza-claro); border-radius: var(--raio); overflow: hidden; }
+.fabrica-titulo {
+  display: flex; align-items: center; gap: .6rem;
+  background: var(--cinza-fundo); padding: .55rem .8rem;
+  border-bottom: 1px solid var(--cinza-claro);
+}
+.fabrica-titulo h3 { margin: 0; font-size: .92rem; }
+.fabrica-titulo .qtd { margin-left: auto; font-size: .78rem; color: var(--cinza-medio); }
+.fabrica-bloco table.dados { border-collapse: collapse; }
+
+button.tirar {
+  background: none; border: 0; color: var(--vermelho); cursor: pointer;
+  font-size: .78rem; padding: .15rem .3rem; font-family: var(--fonte);
+}
+button.tirar:hover { text-decoration: underline; }
+
+@media (max-width: 600px) {
+  .item-kit { flex-direction: column; }
+  .item-foto { width: 100%; height: 150px; flex: none; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Comprovante do envio da solicitação                                 */
+/* ------------------------------------------------------------------ */
+.lista-passos { margin: 0; padding-left: 1.3rem; color: #333; }
+.lista-passos li { margin-bottom: .7rem; line-height: 1.5; font-size: .93rem; }
+.lista-passos li:last-child { margin-bottom: 0; }
+.lista-passos li b { color: var(--azul); }

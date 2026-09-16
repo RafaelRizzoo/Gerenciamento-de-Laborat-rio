@@ -4,6 +4,9 @@ Serve para instalar em qualquer computador (Windows, Mac ou Linux) sem
 precisar instalar Python, criar ambiente virtual nem lidar com a política
 de execução do PowerShell. São dois comandos.
 
+> **Não quer instalar o Docker?** Dá para rodar só com Python: duplo clique
+> no `iniciar.bat`. O passo a passo está no `INSTALAR.md`.
+
 ---
 
 ## 1. Instalar o Docker Desktop

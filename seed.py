@@ -15,6 +15,9 @@ from models import (
     Documento,
     LogAuditoria,
     Notificacao,
+    ItemKit,
+    KitAmbiental,
+    PontoColetaKit,
     Produto,
     ProdutoFabrica,
     ProdutoRisco,
@@ -181,6 +184,7 @@ PRODUTOS = [
 EXTRAS = [
     {   # 0 - Acetona: vigente (verde), controlada pela Policia Federal
         "nome_tecnico": "Propan-2-ona",
+        "tipo_produto": "Solvente",
         "processo": "Preparação metalográfica",
         "restricoes_uso": "Manusear somente sob exaustão. Manter longe de fontes de ignição.",
         "_fabricas": ["Pinda Tubos", "MC SCON2"],
@@ -188,10 +192,18 @@ EXTRAS = [
         "_revisao_meses": 14,
         "_riscos": ["Inflamável", "Irritante"],
         "area_solicitante": "Laboratório",
-        "prazo_utilizacao": "Uso contínuo",
+        "prazo_utilizacao": "Uso contínuo (sem prazo definido)",
+        "necessidade_uso": "Limpeza e desengraxe de amostras metalográficas antes do ataque químico; sem ela o embutimento fica com resíduo e a leitura no microscópio é comprometida.",
+        "motivo_desenvolvimento": "Padronização do preparo de amostras exigida pelo procedimento interno de metalografia.",
+        "funcionarios_expostos": 4,
+        "funcoes_expostas": "Técnico de laboratório, analista metalográfico",
+        "inflamavel": "SIM",
+        "cancerigeno": "NAO",
+        "ponto_fulgor": "-20 °C",
     },
     {   # 1 - Nital: FDS proxima do vencimento (amarelo) + licenca vencida
         "nome_tecnico": "Ácido nítrico em etanol",
+        "tipo_produto": "Outros",
         "processo": "Ataque químico - metalografia",
         "restricoes_uso": "Preparar apenas no volume de uso diário. Não estocar diluído.",
         "_fabricas": ["Pinda Tubos"],
@@ -200,7 +212,14 @@ EXTRAS = [
         "_revisao_meses": 56,
         "_riscos": ["Inflamável", "Corrosivo", "Tóxico"],
         "area_solicitante": "Laboratório",
-        "prazo_utilizacao": "Uso contínuo",
+        "prazo_utilizacao": "Uso contínuo (sem prazo definido)",
+        "necessidade_uso": "Reagente de ataque químico para revelar a microestrutura de aços ao carbono e baixa liga.",
+        "motivo_desenvolvimento": "Exigência da norma de ensaio metalográfico aplicada aos tubos produzidos.",
+        "funcionarios_expostos": 3,
+        "funcoes_expostas": "Analista metalográfico",
+        "inflamavel": "SIM",
+        "cancerigeno": "NAO",
+        "ponto_fulgor": "13 °C",
     },
     {   # 2 - Oleo soluvel: FDS VENCIDA (vermelho), emulsao, 3 fabricas
         "nome_tecnico": "Óleo mineral emulsionável",
@@ -212,30 +231,55 @@ EXTRAS = [
         "_revisao_meses": 68,
         "_riscos": ["Irritante", "Perigoso ao Meio Ambiente"],
         "area_solicitante": "Produção",
-        "prazo_utilizacao": "24 meses",
+        "prazo_utilizacao": "Acima de 2 anos",
+        "necessidade_uso": "Refrigeração e lubrificação das ferramentas de corte na usinagem de tubos, evitando desgaste prematuro e superaquecimento.",
+        "motivo_desenvolvimento": "Aumento de produtividade da linha de usinagem e redução de troca de insertos.",
+        "funcionarios_expostos": 18,
+        "funcoes_expostas": "Operador de usinagem, mantenedor mecânico",
+        "inflamavel": "NAO",
+        "cancerigeno": "NAO",
+        "ponto_fulgor": "acima de 150 °C",
     },
     {   # 3 - Desengraxante: em analise
         "nome_tecnico": "Solução alcalina de hidróxido de potássio",
+        "tipo_produto": "Limpeza",
         "processo": "Lavagem de peças",
         "_fabricas": ["MC TCHB"],
         "_orgaos": [],
         "_revisao_meses": 6,
         "_riscos": ["Corrosivo"],
         "area_solicitante": "Manutenção",
-        "prazo_utilizacao": "12 meses",
+        "prazo_utilizacao": "De 6 a 12 meses",
+        "necessidade_uso": "Remoção de graxa e óleo de peças antes da manutenção e da pintura.",
+        "motivo_desenvolvimento": "Substituição de solvente clorado por alternativa alcalina, dentro do plano de redução de risco químico.",
+        "funcionarios_expostos": 6,
+        "funcoes_expostas": "Mantenedor mecânico, auxiliar de manutenção",
+        "inflamavel": "NAO",
+        "cancerigeno": "NAO",
+        "ponto_fulgor": "Não aplicável (base aquosa)",
     },
     {   # 4 - Tinta epoxi: em analise
         "nome_tecnico": "Resina epóxi bicomponente",
+        "tipo_produto": "Outros",
         "processo": "Pintura de acabamento",
         "_fabricas": ["MC SCON2", "MC TCHB"],
         "_orgaos": [],
         "_revisao_meses": 9,
         "_riscos": ["Inflamável", "Nocivo"],
         "area_solicitante": "Produção",
-        "prazo_utilizacao": "18 meses",
+        "prazo_utilizacao": "De 1 a 2 anos",
+        "necessidade_uso": "Acabamento e proteção anticorrosiva de estruturas e tubos destinados a ambiente agressivo.",
+        "motivo_desenvolvimento": "Requisito de cliente para revestimento com maior resistência química.",
+        "funcionarios_expostos": 9,
+        "funcoes_expostas": "Pintor industrial, ajudante de pintura",
+        "inflamavel": "SIM",
+        "cancerigeno": "NAO",
+        "ponto_fulgor": "27 °C",
+        "solicitante_terceiro": "Pintec Serviços Industriais Ltda.",
     },
     {   # 5 - Removedor clorado: reprovado, controlado por Policia Civil
         "nome_tecnico": "Diclorometano",
+        "tipo_produto": "Solvente",
         "processo": "Remoção de tinta",
         "restricoes_uso": "Uso proibido - reprovado pela área de Saúde e Segurança.",
         "_fabricas": ["RDO"],
@@ -243,7 +287,14 @@ EXTRAS = [
         "_revisao_meses": 30,
         "_riscos": ["Tóxico", "Perigoso ao Meio Ambiente"],
         "area_solicitante": "Manutenção",
-        "prazo_utilizacao": "6 meses",
+        "prazo_utilizacao": "Até 6 meses",
+        "necessidade_uso": "Remoção de tinta antiga de equipamentos antes da repintura.",
+        "motivo_desenvolvimento": "Solicitação da manutenção para agilizar a preparação de superfície.",
+        "funcionarios_expostos": 5,
+        "funcoes_expostas": "Pintor industrial, mantenedor",
+        "inflamavel": "NAO",
+        "cancerigeno": "SIM",
+        "ponto_fulgor": "Não aplicável",
     },
     {   # 6 - Inibidor de corrosao: descontinuado, hidraulico
         "nome_tecnico": "Aminas graxas etoxiladas",
@@ -254,7 +305,14 @@ EXTRAS = [
         "_revisao_meses": 40,
         "_riscos": ["Nocivo"],
         "area_solicitante": "Engenharia",
-        "prazo_utilizacao": "12 meses",
+        "prazo_utilizacao": "De 6 a 12 meses",
+        "necessidade_uso": "Proteção das tubulações do circuito de água de processo contra corrosão interna.",
+        "motivo_desenvolvimento": "Plano de manutenção preditiva após detecção de perda de espessura nas linhas.",
+        "funcionarios_expostos": 2,
+        "funcoes_expostas": "Operador de utilidades",
+        "inflamavel": "NAO",
+        "cancerigeno": "NAO",
+        "ponto_fulgor": "acima de 100 °C",
     },
 ]
 
@@ -734,8 +792,162 @@ def popular_biblioteca(sessao, usuarios):
     print(f"Biblioteca populada com {len(BIBLIOTECA)} itens.")
 
 
+# =====================================================================
+# Kit Ambiental (conteúdo de exemplo)
+# =====================================================================
+
+def _png_simples(cor: tuple[int, int, int], largura: int = 160, altura: int = 160) -> bytes:
+    """PNG de cor sólida com uma faixa mais clara - serve de foto de exemplo."""
+    import struct
+    import zlib
+
+    clara = tuple(min(255, c + 60) for c in cor)
+    linhas = b""
+    for y in range(altura):
+        usa = clara if (altura // 3) <= y < (2 * altura // 3) else cor
+        linhas += b"\x00" + bytes(usa) * largura
+
+    def bloco(tipo: bytes, dados: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(dados)) + tipo + dados
+            + struct.pack(">I", zlib.crc32(tipo + dados) & 0xFFFFFFFF)
+        )
+
+    cabecalho = struct.pack(">IIBBBBB", largura, altura, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + bloco(b"IHDR", cabecalho)
+        + bloco(b"IDAT", zlib.compress(linhas, 9))
+        + bloco(b"IEND", b"")
+    )
+
+
+KITS = [
+    {
+        "codigo": "KIT A",
+        "nome": "Kit de contenção para óleos e combustíveis",
+        "utilidade": "Contém e absorve vazamentos de óleo, graxa, fluido de corte e "
+                     "combustível antes que atinjam o solo ou a rede de drenagem.",
+        "quando_usar": "Vazamento de equipamento hidráulico, transferência de óleo, "
+                       "abastecimento de empilhadeira e manutenção de máquinas.",
+        "itens": [
+            ("Manta absorvente oleofílica", "4", "un",
+             "Absorve óleo e repele água. Usada sobre a poça para recolher o produto.",
+             (30, 80, 140)),
+            ("Cordão absorvente 1,2 m", "2", "un",
+             "Faz o cerco do vazamento e impede que ele se espalhe pelo piso.", None),
+            ("Travesseiro absorvente", "2", "un",
+             "Para poças mais profundas e para recolher o resíduo do fundo.", None),
+            ("Pá antifaísca", "1", "un",
+             "Recolhe o material absorvido sem risco de faísca perto de inflamáveis.",
+             (120, 120, 125)),
+            ("Saco para resíduo contaminado", "5", "un",
+             "Acondiciona o material usado para destinação conforme o PGRS.", None),
+            ("Luva nitrílica", "2", "par",
+             "Proteção das mãos no manuseio do absorvente contaminado.", None),
+            ("Óculos de proteção", "1", "un",
+             "Proteção dos olhos contra respingos durante a contenção.", None),
+        ],
+        "pontos": [
+            ("Pinda Tubos", "Galpão 3 - corredor da central de fluidos, ao lado do extintor",
+             "Marcelo Antunes", "4721", ""),
+            ("Pinda Tubos", "Oficina de manutenção mecânica - próximo ao portão de carga",
+             "Marcelo Antunes", "4721", ""),
+            ("MC TCHB", "Casa de bombas - parede externa, junto ao chuveiro de emergência",
+             "Rosana Prado", "5310", "Kit compartilhado com a equipe de utilidades."),
+        ],
+    },
+    {
+        "codigo": "KIT B",
+        "nome": "Kit de contenção para produtos químicos",
+        "utilidade": "Contém, neutraliza e recolhe derramamentos de ácidos, bases, "
+                     "solventes e demais produtos químicos da planta.",
+        "quando_usar": "Queda de bombona, vazamento em tanque de tratamento, "
+                       "derramamento durante a diluição ou o transporte interno.",
+        "itens": [
+            ("Absorvente granulado (turfa)", "5", "kg",
+             "Absorve o líquido derramado e facilita o recolhimento com a pá.",
+             (110, 80, 50)),
+            ("Neutralizante para ácidos", "2", "kg",
+             "Neutraliza o produto antes do recolhimento, reduzindo o risco químico.",
+             None),
+            ("Barreira de contenção 2 m", "1", "un",
+             "Bloqueia o caminho até o ralo e delimita a área atingida.", None),
+            ("Pá e enxada plásticas", "1", "un",
+             "Recolhem o granulado contaminado sem reagir com o produto.", None),
+            ("Bombona de 30 L para resíduo", "1", "un",
+             "Recebe o resíduo recolhido, devidamente identificado com etiqueta.", None),
+            ("Luva de PVC cano longo", "2", "par",
+             "Proteção contra respingos de produto corrosivo.", None),
+            ("Protetor facial", "1", "un",
+             "Proteção do rosto durante a neutralização e o recolhimento.", None),
+        ],
+        "pontos": [
+            ("Pinda Tubos", "Laboratório - antessala da capela de exaustão",
+             "Diego Ramos", "4088", ""),
+            ("COSE", "Área de tratamento de superfície - junto ao lava-olhos",
+             "Priscila Matos", "6142", ""),
+            ("MC SCON2", "Depósito de produtos químicos - entrada principal",
+             "Wagner Pires", "5877", "Verificar o lacre antes de retirar."),
+        ],
+    },
+]
+
+
+def popular_kits(sessao, usuarios):
+    """Cria os kits ambientais de exemplo, com itens e pontos de coleta."""
+    autor = usuarios.get("MEIO_AMBIENTE") or usuarios.get("ADMIN")
+    criados = 0
+    for ordem, dados in enumerate(KITS, start=1):
+        ja_existe = sessao.scalar(
+            select(KitAmbiental).where(KitAmbiental.codigo == dados["codigo"])
+        )
+        if ja_existe:
+            continue  # nao duplica quando o script roda mais de uma vez
+        criados += 1
+        kit = KitAmbiental(
+            codigo=dados["codigo"],
+            nome=dados["nome"],
+            utilidade=dados["utilidade"],
+            quando_usar=dados["quando_usar"],
+            ordem=ordem,
+            atualizado_por_id=autor.id if autor else None,
+        )
+        sessao.add(kit)
+        sessao.flush()
+
+        for posicao, (nome, qtd, unidade, utilidade, cor) in enumerate(dados["itens"], start=1):
+            sessao.add(
+                ItemKit(
+                    kit_id=kit.id,
+                    nome=nome,
+                    quantidade=qtd,
+                    unidade=unidade,
+                    utilidade=utilidade,
+                    ordem=posicao,
+                    foto=_png_simples(cor) if cor else None,
+                    foto_tipo="image/png" if cor else None,
+                )
+            )
+
+        for fabrica, local, responsavel, ramal, obs in dados["pontos"]:
+            sessao.add(
+                PontoColetaKit(
+                    kit_id=kit.id,
+                    fabrica=fabrica,
+                    local=local,
+                    responsavel=responsavel,
+                    ramal=ramal,
+                    observacoes=obs or None,
+                )
+            )
+    sessao.flush()
+    print(f"Kits ambientais populados: {criados}.")
+
+
 def limpar(sessao):
-    for modelo in (Notificacao, LogAuditoria, RecursoArquivo, Recurso, Documento,
+    for modelo in (Notificacao, LogAuditoria, RecursoArquivo, Recurso,
+                   ItemKit, PontoColetaKit, KitAmbiental, Documento,
                    Aprovacao, ControleOrgao, ProdutoFabrica, ProdutoRisco,
                    Produto, Usuario):
         sessao.query(modelo).delete()
@@ -865,6 +1077,7 @@ def executar(recriar: bool = True):
             print(f"Aprovadores por área vinculados: {criados}.")
 
         popular_biblioteca(s, usuarios)
+        popular_kits(s, usuarios)
 
         print("Base populada com sucesso.")
         print(f"Usuarios criados ({len(USUARIOS)}) - senha padrão: {SENHA_PADRAO}")

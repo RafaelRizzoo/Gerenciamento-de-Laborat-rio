@@ -7,26 +7,10 @@ set -e
 
 echo "== Gestão de Produtos Químicos - preparando o banco =="
 
-# 1) cria/atualiza as tabelas e converte dados de versões anteriores
-python migrar_fluxo.py || echo "  (migração pulada)"
-
-# 2) na primeira execução (banco vazio), carrega os dados de exemplo
-python - <<'PY'
-from sqlalchemy import func, select
-
-from database import db_session
-from models import Usuario
-
-with db_session() as s:
-    total = s.scalar(select(func.count(Usuario.id))) or 0
-
-if total == 0:
-    print("Banco vazio: carregando dados de exemplo (seed).")
-    import seed
-    seed.executar()
-else:
-    print(f"Banco já tem {total} usuário(s) - seed não foi executado.")
-PY
+# Cria/atualiza as tabelas, converte dados de versões anteriores e, se o
+# banco estiver vazio, carrega os dados de exemplo. O mesmo script é usado
+# pelo iniciar.bat (instalação sem Docker).
+python preparar.py
 
 echo "== Iniciando a aplicação em http://localhost:5001 =="
 exec "$@"

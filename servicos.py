@@ -78,11 +78,19 @@ def criar_solicitacao(sessao, dados: dict, solicitante: Usuario, arquivos: list[
         area_solicitante=dados.get("area_solicitante"),
         prazo_utilizacao=dados.get("prazo_utilizacao"),
         aplicacao=dados.get("aplicacao"),
+        necessidade_uso=dados.get("necessidade_uso"),
+        motivo_desenvolvimento=dados.get("motivo_desenvolvimento"),
+        funcionarios_expostos=dados.get("funcionarios_expostos"),
+        funcoes_expostas=dados.get("funcoes_expostas"),
+        solicitante_terceiro=dados.get("solicitante_terceiro"),
         processo=dados.get("processo"),
         consumo_estimado=dados.get("consumo_estimado"),
         unidade=dados.get("unidade"),
         local_armazenamento=dados.get("local_armazenamento"),
         classificacao_ghs=dados.get("classificacao_ghs"),
+        inflamavel=dados.get("inflamavel"),
+        cancerigeno=dados.get("cancerigeno"),
+        ponto_fulgor=dados.get("ponto_fulgor"),
         onu_numero=dados.get("onu_numero"),
         epi_recomendado=dados.get("epi_recomendado"),
         restricoes_uso=dados.get("restricoes_uso"),
@@ -239,8 +247,11 @@ def atualizar_ficha(sessao, produto: Produto, dados: dict, usuario: Usuario) -> 
     campos = (
         "nome_tecnico", "fornecedor", "categoria", "tipo_produto", "numero_cas",
         "composicao", "estado_fisico", "aplicacao", "processo",
+        "necessidade_uso", "motivo_desenvolvimento", "solicitante_terceiro",
+        "funcionarios_expostos", "funcoes_expostas",
         "area_solicitante", "prazo_utilizacao", "consumo_estimado", "unidade",
         "local_armazenamento", "classificacao_ghs", "onu_numero",
+        "inflamavel", "cancerigeno", "ponto_fulgor",
         "epi_recomendado", "restricoes_uso", "observacoes",
     )
     alterados = []
@@ -996,3 +1007,191 @@ def enviar_lembretes(sessao, dias: int = DIAS_LEMBRETE) -> int:
         enviados += 1
     sessao.flush()
     return enviados
+
+
+# =====================================================================
+# Kit Ambiental
+# =====================================================================
+
+from models import (  # noqa: E402  (agrupado aqui para isolar o módulo)
+    PAPEIS_KIT,
+    ItemKit,
+    KitAmbiental,
+    PontoColetaKit,
+)
+
+
+def pode_editar_kit(usuario) -> bool:
+    return bool(usuario) and usuario.papel in PAPEIS_KIT
+
+
+def listar_kits(sessao, incluir_inativos: bool = False) -> list[KitAmbiental]:
+    consulta = select(KitAmbiental).order_by(KitAmbiental.ordem, KitAmbiental.codigo)
+    if not incluir_inativos:
+        consulta = consulta.where(KitAmbiental.ativo.is_(True))
+    return list(sessao.scalars(consulta).unique())
+
+
+def obter_kit(sessao, kit_id: int) -> KitAmbiental | None:
+    return sessao.get(KitAmbiental, kit_id)
+
+
+def criar_kit(sessao, dados: dict, autor=None) -> KitAmbiental:
+    total = sessao.scalar(select(func.count(KitAmbiental.id))) or 0
+    kit = KitAmbiental(
+        codigo=(dados.get("codigo") or "").strip() or f"KIT-{total + 1}",
+        nome=(dados.get("nome") or "").strip(),
+        utilidade=(dados.get("utilidade") or "").strip() or None,
+        quando_usar=(dados.get("quando_usar") or "").strip() or None,
+        ordem=total + 1,
+        atualizado_por_id=autor.id if autor else None,
+    )
+    sessao.add(kit)
+    sessao.flush()
+    registrar_log(
+        sessao, "KIT_CRIADO", f"{kit.codigo} - {kit.nome}", autor.id if autor else None
+    )
+    return kit
+
+
+def atualizar_kit(sessao, kit: KitAmbiental, dados: dict, autor=None) -> KitAmbiental:
+    kit.codigo = (dados.get("codigo") or kit.codigo).strip()
+    kit.nome = (dados.get("nome") or kit.nome).strip()
+    kit.utilidade = (dados.get("utilidade") or "").strip() or None
+    kit.quando_usar = (dados.get("quando_usar") or "").strip() or None
+    kit.atualizado_em = datetime.now()
+    kit.atualizado_por_id = autor.id if autor else kit.atualizado_por_id
+    sessao.flush()
+    registrar_log(
+        sessao, "KIT_EDITADO", f"{kit.codigo} - {kit.nome}", autor.id if autor else None
+    )
+    return kit
+
+
+def arquivar_kit(sessao, kit: KitAmbiental, autor=None, ativo: bool = False):
+    kit.ativo = ativo
+    kit.atualizado_em = datetime.now()
+    sessao.flush()
+    registrar_log(
+        sessao,
+        "KIT_RESTAURADO" if ativo else "KIT_ARQUIVADO",
+        f"{kit.codigo} - {kit.nome}",
+        autor.id if autor else None,
+    )
+
+
+# --------------------------------------------------------------- Itens
+def adicionar_item(sessao, kit: KitAmbiental, dados: dict, foto: dict | None = None,
+                   autor=None) -> ItemKit:
+    proxima = max([i.ordem for i in kit.itens], default=0) + 1
+    item = ItemKit(
+        kit_id=kit.id,
+        nome=(dados.get("nome") or "").strip(),
+        utilidade=(dados.get("utilidade") or "").strip() or None,
+        quantidade=(dados.get("quantidade") or "").strip() or None,
+        unidade=(dados.get("unidade") or "").strip() or None,
+        produto_id=dados.get("produto_id"),
+        ordem=proxima,
+    )
+    if foto:
+        item.foto = foto["conteudo"]
+        item.foto_tipo = foto.get("content_type")
+    sessao.add(item)
+    sessao.flush()
+    registrar_log(
+        sessao, "KIT_ITEM_ADICIONADO", f"{kit.codigo}: {item.nome}",
+        autor.id if autor else None,
+    )
+    return item
+
+
+def atualizar_item(sessao, item: ItemKit, dados: dict, foto: dict | None = None,
+                   autor=None) -> ItemKit:
+    item.nome = (dados.get("nome") or item.nome).strip()
+    item.utilidade = (dados.get("utilidade") or "").strip() or None
+    item.quantidade = (dados.get("quantidade") or "").strip() or None
+    item.unidade = (dados.get("unidade") or "").strip() or None
+    item.produto_id = dados.get("produto_id")
+    if foto:
+        item.foto = foto["conteudo"]
+        item.foto_tipo = foto.get("content_type")
+    if dados.get("remover_foto"):
+        item.foto = None
+        item.foto_tipo = None
+    sessao.flush()
+    registrar_log(
+        sessao, "KIT_ITEM_EDITADO", f"{item.kit.codigo}: {item.nome}",
+        autor.id if autor else None,
+    )
+    return item
+
+
+def remover_item(sessao, item: ItemKit, autor=None) -> None:
+    nome, codigo = item.nome, item.kit.codigo
+    sessao.delete(item)
+    sessao.flush()
+    registrar_log(
+        sessao, "KIT_ITEM_REMOVIDO", f"{codigo}: {nome}", autor.id if autor else None
+    )
+
+
+# ------------------------------------------------------- Pontos de coleta
+def adicionar_ponto(sessao, kit: KitAmbiental, dados: dict, autor=None) -> PontoColetaKit:
+    ponto = PontoColetaKit(
+        kit_id=kit.id,
+        fabrica=(dados.get("fabrica") or "").strip(),
+        local=(dados.get("local") or "").strip(),
+        responsavel=(dados.get("responsavel") or "").strip() or None,
+        ramal=(dados.get("ramal") or "").strip() or None,
+        observacoes=(dados.get("observacoes") or "").strip() or None,
+    )
+    sessao.add(ponto)
+    sessao.flush()
+    registrar_log(
+        sessao, "KIT_PONTO_ADICIONADO",
+        f"{kit.codigo} em {ponto.fabrica} - {ponto.local}",
+        autor.id if autor else None,
+    )
+    return ponto
+
+
+def remover_ponto(sessao, ponto: PontoColetaKit, autor=None) -> None:
+    descricao = f"{ponto.kit.codigo} em {ponto.fabrica} - {ponto.local}"
+    sessao.delete(ponto)
+    sessao.flush()
+    registrar_log(
+        sessao, "KIT_PONTO_REMOVIDO", descricao, autor.id if autor else None
+    )
+
+
+# ------------------------------------------------------------ Consultas
+def pontos_por_fabrica(sessao, fabrica: str = "") -> dict[str, list[PontoColetaKit]]:
+    """{fábrica: [pontos]} — a visão de 'onde encontrar um kit'."""
+    consulta = select(PontoColetaKit).where(PontoColetaKit.ativo.is_(True))
+    if fabrica:
+        consulta = consulta.where(PontoColetaKit.fabrica == fabrica)
+    pontos = list(
+        sessao.scalars(consulta.order_by(PontoColetaKit.fabrica, PontoColetaKit.local)).unique()
+    )
+    agrupado: dict[str, list[PontoColetaKit]] = {}
+    for ponto in pontos:
+        if ponto.kit and not ponto.kit.ativo:
+            continue
+        agrupado.setdefault(ponto.fabrica, []).append(ponto)
+    return agrupado
+
+
+def resumo_kits(sessao) -> dict:
+    kits = listar_kits(sessao)
+    pontos = [p for k in kits for p in k.pontos_ativos]
+    fabricas = []
+    for ponto in pontos:
+        if ponto.fabrica not in fabricas:
+            fabricas.append(ponto.fabrica)
+    return {
+        "kits": len(kits),
+        "pontos": len(pontos),
+        "fabricas": sorted(fabricas),
+        "itens": sum(len(k.itens_ativos) for k in kits),
+        "sem_composicao": [k for k in kits if k.sem_composicao],
+    }

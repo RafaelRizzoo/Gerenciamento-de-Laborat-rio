@@ -10,47 +10,60 @@ desenvolvimento e em **SQL Server** em produção (troca feita apenas no arquivo
 
 ## 1. Como executar no Windows
 
-```bat
+**Duplo clique em `iniciar.bat`.** Ele cuida de tudo: procura o Python (e
+oferece instalar, se faltar), cria o ambiente virtual, instala as
+bibliotecas, prepara o banco e sobe a aplicação em
+**http://localhost:5001**.
+
+Guia passo a passo para quem vai instalar do zero: **`INSTALAR.md`**.
+Para rodar em contêiner: **`DOCKER.md`** (`recreate.bat`).
+
+<details>
+<summary>Fazendo na mão, comando por comando</summary>
+
+```powershell
 :: 1) dentro da pasta do projeto
-python -m venv .venv
-.venv\Scripts\activate
+py -3 -m venv .venv
 
-:: 2) instalar as dependências
-pip install -r requirements.txt
+:: 2) instalar as dependencias (o .venv\Scripts\activate pode ser bloqueado
+::    pela politica do PowerShell; chamar o python direto evita isso)
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 
-:: 3) criar o arquivo de configuração
-copy .env.example .env
+:: 3) preparar o banco (cria tabelas e, se estiver vazio, carrega exemplos)
+.venv\Scripts\python.exe preparar.py
 
-:: 4) popular o banco com dados de exemplo (opcional, recomendado no 1o uso)
-python seed.py
-
-:: 5) subir a aplicação
-python main.py
+:: 4) subir a aplicacao
+.venv\Scripts\python.exe main.py
 ```
 
-Depois abrir no navegador: **http://127.0.0.1:5001**
+> Se aparecer erro de `pyodbc` na instalação e você ainda estiver usando
+> SQLite, tire a linha `pyodbc` do `requirements.txt` — ela só é necessária
+> para o SQL Server.
 
-> Se aparecer erro de `pyodbc` na instalação e você ainda estiver usando SQLite,
-> comente a linha `pyodbc` do `requirements.txt` — ela só é necessária para o SQL Server.
+</details>
 
 ### Usuários de teste (senha `tenaris123`)
 
 | E-mail | Papel no fluxo |
 |---|---|
 | ana.silva@tenaris.com | Solicitante |
-| bruno.costa@tenaris.com | Meio Ambiente (1ª aprovação) |
-| carla.mendes@tenaris.com | Saúde e Segurança (2ª aprovação) |
-| diego.ramos@tenaris.com | Químico Responsável (3ª aprovação) |
-| eduardo.lima@tenaris.com | Aprovador Final (4ª aprovação) |
+| bruno.costa@tenaris.com | Meio Ambiente |
+| carla.mendes@tenaris.com | Saúde |
+| fabio.nunes@tenaris.com | Segurança |
+| diego.ramos@tenaris.com | Químico Responsável |
+| eduardo.lima@tenaris.com | Aprovador Final |
 | rafael.rizzo@tenaris.com | Administrador (vê tudo) |
 
-Para testar o fluxo completo: entre como **Ana**, cadastre um produto, depois entre
-como Bruno → Carla → Diego → Eduardo e aprove cada etapa.
+As quatro áreas (Meio Ambiente, Saúde, Segurança e Químico Responsável)
+avaliam **em paralelo, sem ordem entre elas**. O Aprovador Final só entra
+depois que todas concluíram; qualquer reprovação encerra o processo.
 
-Para testar a parte pública, basta **não entrar** (ou clicar em *Sair*) e navegar
-pela página inicial.
+Para testar o fluxo completo: cadastre um produto (não precisa de login),
+depois entre como Bruno, Carla, Fábio e Diego, aprove em cada área, e feche
+como Eduardo.
 
----
+Para testar a parte pública, basta **não entrar** (ou clicar em *Sair*) e
+navegar pela página inicial.
 
 ## 1.1 Modelo de acesso (site público na rede interna)
 
@@ -62,7 +75,7 @@ identificação só é exigida onde alguém precisa assinar o que fez.
 | Página inicial, busca, `/produtos`, `/classificacao`, `/fds`, `/historico` | **Aberto** — sem login |
 | Download de FDS e Ficha de Emergência de produtos aprovados | **Aberto** |
 | Ficha completa de produto aprovado | **Aberto** |
-| Nova solicitação (`/solicitacoes/nova`) | Exige login |
+| Nova solicitação (`/solicitacoes/nova`), biblioteca (`/recursos`), kit ambiental | **Aberto** — sem login |
 | Registrar parecer / aprovar etapa | Exige login + ser o responsável da etapa |
 | Aprovações pendentes, Minhas solicitações, Painel | Exige login |
 | Descontinuar / reativar produto | Exige login + Químico Responsável, Aprovador Final ou Admin |
@@ -114,6 +127,12 @@ terço esquerdo escuro e sem detalhe, porque o texto branco fica sobre ele.
 | `static/styles.css` | Identidade visual Tenaris |
 | `static/img/hero.jpg` | Imagem de fundo da página inicial (substituível) |
 | `config.py` / `.env` | Configuração (banco, SMTP, uploads) |
+| `extracao.py` | Leitura do PDF da FDS (preenche parte do cadastro) |
+| `preparar.py` | Cria/atualiza tabelas e carrega exemplos se o banco estiver vazio |
+| `migrar_fluxo.py` | Converte bancos de versões anteriores do fluxo |
+| `iniciar.bat` | **Sem Docker:** instala o que falta e liga o sistema |
+| `recreate.bat` | **Com Docker:** atualiza, reconstrói e liga o contêiner |
+| `INSTALAR.md` / `DOCKER.md` | Guias de instalação para quem só vai usar |
 
 ### Paleta aplicada (cores oficiais Tenaris)
 

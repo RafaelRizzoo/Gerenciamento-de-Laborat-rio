@@ -3,11 +3,18 @@
 Lê o texto do PDF localmente - o arquivo NÃO sai da rede interna - e procura
 as informações nas seções previstas pela ABNT NBR 14725:
 
-    Seção 1 - Identificação do produto e do fornecedor
-    Seção 2 - Identificação de perigos (classificação GHS, frases H)
-    Seção 3 - Composição e informações sobre os ingredientes (nº CAS)
-    Seção 9 - Propriedades físicas e químicas (estado físico)
-    Seção 14 - Informações sobre transporte (número ONU)
+    Seção 1  - Identificação: nome, fabricante e usos recomendados
+    Seção 2  - Perigos: classificação GHS, frases H, inflamabilidade
+    Seção 3  - Composição: número CAS
+    Seção 9  - Propriedades: estado físico e ponto de fulgor
+    Seção 11 - Toxicologia: carcinogenicidade
+    Seção 14 - Transporte: número ONU
+
+Na prática cada fabricante monta a ficha de um jeito - tabela de duas
+colunas, seções numeradas "SEÇÃO 9:" ou "9 -", rótulo com e sem dois-pontos,
+e a extração do PDF ainda parte palavras no meio ("r evisão", "202 4"). Por
+isso a leitura é feita sobre o texto achatado, delimitando cada valor pelo
+rótulo seguinte, com vários caminhos alternativos por campo.
 
 O resultado é sempre uma SUGESTÃO: o solicitante confere e corrige na tela
 antes de enviar. Campo não encontrado volta vazio para preenchimento manual.
@@ -54,8 +61,94 @@ def texto_do_pdf(conteudo: bytes) -> str:
 def _limpar(valor: str | None, limite: int = 180) -> str:
     if not valor:
         return ""
-    valor = re.sub(r"\s+", " ", valor).strip(" .:;-\t")
+    valor = re.sub(r"\s+", " ", valor).strip(" .:;-–—()\t")
     return valor[:limite].strip()
+
+
+# ---------------------------------------------------------------------
+# Leitura por rótulo em fichas de duas colunas
+# ---------------------------------------------------------------------
+# A maioria das FDS brasileiras é uma tabela de duas colunas: o rótulo à
+# esquerda, o valor à direita. Ao extrair o texto do PDF, o rótulo quebra em
+# várias linhas ("Classificação da\nsubstância ou mistura:  Corrosivo..."),
+# o que quebra qualquer busca linha a linha. A saída é achatar o documento
+# num texto só e delimitar o valor pelo rótulo seguinte.
+
+def _plano(texto: str) -> str:
+    """Texto do PDF em uma linha só, com espaços normalizados."""
+    return re.sub(r"\s+", " ", texto or "")
+
+
+# Rótulos que costumam vir logo depois de um valor: servem de "pare aqui".
+_TERMINADORES = [
+    r"Outras?\s+maneiras?", r"Usos?\s+recomendados?", r"Detalhes?\s+do\s+fornecedor",
+    r"Endere[çc]o", r"Telefones?", r"E-?mail", r"N[úu]mero\s+do\s+telefone",
+    r"Raz[ãa]o\s+social", r"CNPJ", r"Site\b",
+    r"Sistema\s+de\s+classifica", r"Elementos?\s+de\s+rotulagem", r"Pictogramas?",
+    r"Palavras?\s+de\s+advert", r"Frases?\s+de\s+(?:perigo|precau)",
+    r"Outros\s+perigos", r"Classifica[çc][ãa]o\s+d[ao]s?\s+(?:subst|mistura|perigo)",
+    r"Estado\s+f[íi]sico", r"\bCor\s*:", r"\bOdor\b", r"\bpH\b",
+    r"Ponto\s+de\s+(?:fus[ãa]o|ebuli|fulgor)", r"Inflamabilidade",
+    r"Limites?\s+(?:inferior|superior|de)", r"Temperaturas?\s+de",
+    r"Viscosidade", r"Solubilidade", r"Press[ãa]o\s+de\s+vapor",
+    r"Coeficiente\s+de\s+parti", r"Densidades?\b", r"Caracter[íi]sticas?\s+de\s+part",
+    r"Outras\s+informa", r"Toxicidade", r"Corros[ãa]o\s*/", r"Sensibiliza[çc][ãa]o",
+    r"Mutagenicidade", r"Carcinogenicidade", r"Les[õo]es\s+oculares",
+    r"Perigo\s+por\s+aspira", r"Nome\s+apropriado", r"Classe\s+ou\s+subclasse",
+    r"Grupo\s+de\s+embalagem", r"N[úu]mero\s+de\s+risco", r"Perigo\s+ao\s+Meio",
+    r"P[áa]gina\s*:", r"Em\s+conformidade\s+com", r"Vers[ãa]o\s*:",
+    r"Nome\s+d[ao]\s+(?:empresa|mistura|produto|fabricante|fornecedor)",
+    r"Taxa\s+de\s+evapora", r"Aspecto\b", r"Apar[êe]ncia\b", r"Forma\s+do\s+produto",
+    r"C[óo]digo\s+do\s+produto", r"Limiar\s+de\s+odor", r"Tamanho\s+das\s+part",
+    r"Revis[ãa]o\s*:", r"Data\s+d[ae]\b", r"Principais\s+usos?",
+    # começo de um endereço (o nome da empresa termina ali)
+    r"\b(?:Av(?:enida)?|Rua|Rod(?:ovia)?\.?|Estrada|Pra[çc]a|Alameda|Travessa|Km|CEP)\b",
+]
+
+
+# Cabeçalho da próxima seção ("9 - PROPRIEDADES FÍSICAS E QUÍMICAS"). Vai
+# separado porque só vale em CAIXA ALTA - com IGNORECASE ele casaria com
+# qualquer "1. Sistema de classificação" e cortaria o valor no meio.
+_TERMINADOR_SECAO = re.compile(r"\d{1,2}\s*[-–.]\s*[A-ZÀ-Ú][A-ZÀ-Ú\s\-]{5,}")
+
+
+def _valor_rotulado(plano: str, rotulos: list[str], limite: int = 300,
+                    exigir_dois_pontos: bool = True,
+                    terminadores: list[str] | None = None) -> str:
+    """Valor que vem depois de um rótulo, até o próximo rótulo conhecido.
+
+    Algumas fichas escrevem o rótulo sem dois-pontos, com o valor na linha
+    de baixo ("Detalhes do fornecedor / Fabricante / Empresa X Ltda"). Nesse
+    caso a busca é repetida com `exigir_dois_pontos=False`.
+    """
+    pontuacao = r"\s*:\s*" if exigir_dois_pontos else r"\s*:?\s*"
+    for rotulo in rotulos:
+        achado = re.search(rf"{rotulo}{pontuacao}", plano, re.IGNORECASE)
+        if not achado:
+            continue
+        resto = plano[achado.end():]
+        corte = min(len(resto), limite * 3)
+        for terminador in (terminadores or _TERMINADORES):
+            fim = re.search(terminador, resto, re.IGNORECASE)
+            if fim and 0 < fim.start() < corte:
+                corte = fim.start()
+        secao = _TERMINADOR_SECAO.search(resto)
+        if secao and 0 < secao.start() < corte:
+            corte = secao.start()
+        valor = _limpar(resto[:corte], limite)
+        if len(valor) >= 2 and not valor.lower().startswith(("ver ", "consulte", "vide")):
+            return valor
+    return ""
+
+
+def _sem_informacao(valor: str) -> bool:
+    """True para 'Não disponível', 'N/A', '-' e afins."""
+    v = (valor or "").strip().lower().strip(" .")
+    return (not v) or v in {"-", "--", "n/a", "n.a", "n/d", "n.d", "na", "nd"} or v.startswith(
+        ("não disponível", "nao disponivel", "não aplicável", "nao aplicavel",
+         "não determinado", "nao determinado", "não informado", "nao informado",
+         "sem informa", "não estabelecid", "nao estabelecid")
+    )
 
 
 # ---------------------------------------------------------------------
@@ -71,6 +164,16 @@ _ROTULOS_NOME = [
     r"produto",
 ]
 
+# No texto achatado o rótulo pode estar partido em várias linhas
+# ("Identificação do\nproduto:\nCoagulante...") - depende da versão do pypdf.
+_ROTULOS_NOME_PLANO = [
+    r"nome\s+d[ao]\s+mistura\s*\(\s*nome\s+comercial\s*\)",
+    r"nome\s+comercial",
+    r"nome\s+d[ao]\s+produto",
+    r"identifica[çc][ãa]o\s+d[ao]\s+produto",
+    r"nome\s+d[ao]\s+(?:mistura|material|subst[âa]ncia)",
+]
+
 _ROTULOS_FABRICANTE = [
     r"fabricante",
     r"empresa",
@@ -78,6 +181,36 @@ _ROTULOS_FABRICANTE = [
     r"raz[ãa]o\s+social",
     r"nome\s+da\s+empresa",
 ]
+
+# Na NBR 14725 a empresa aparece como "Detalhes do fornecedor" - e o valor
+# quase sempre quebra em várias linhas, junto com endereço e telefone.
+_ROTULOS_EMPRESA = [
+    r"detalhes?\s+d[oa]\s+(?:fornecedor|fabricante|empresa)",
+    r"identifica[çc][ãa]o\s+d[ao]\s+(?:empresa|fornecedor|fabricante)",
+    r"nome\s+d[ao]\s+(?:empresa|fornecedor|fabricante)",
+    r"raz[ãa]o\s+social",
+    r"fabricante",
+    r"fornecedor",
+    r"empresa",
+]
+
+_ROTULOS_USO = [
+    r"usos?\s+recomendados?\s+do\s+produto\s+qu[íi]mico\s+e\s+restri[çc][õo]es\s+de\s+uso",
+    r"usos?\s+recomendados?[^:]{0,60}",
+    r"uso\s+(?:previsto|indicado)[^:]{0,40}",
+    r"aplica[çc][ãa]o\s+do\s+produto",
+]
+
+_ROTULOS_CLASSIFICACAO = [
+    r"classifica[çc][ãa]o\s+d[ao]\s+subst[âa]ncia\s+ou\s+mistura",
+    r"classifica[çc][ãa]o\s+de\s+perigos?(?:\s+d[oa]\s+(?:produto|mistura))?",
+    r"classifica[çc][ãa]o\s+GHS",
+    r"classifica[çc][ãa]o\s+d[oa]\s+(?:produto|mistura)",
+]
+
+_ROTULOS_FULGOR = [r"ponto\s+de\s+fulgor", r"flash\s*point"]
+_ROTULOS_INFLAMABILIDADE = [r"inflamabilidade"]
+_ROTULOS_CARCINO = [r"carcinogenicidade", r"carcinogenicidade\s*/\s*mutagenicidade"]
 
 
 def _valor_apos_rotulo(texto: str, rotulos: list[str], limite: int = 180) -> str:
@@ -180,7 +313,10 @@ def extrair_estado_fisico(texto: str) -> str:
     return _estado_em(_secao(texto, 9)) or _estado_em(texto)
 
 
-_PADRAO_ONU = re.compile(r"\b(?:UN|ONU|N[º°.]?\s*ONU)\s*[:\-]?\s*(\d{4})\b", re.IGNORECASE)
+_PADRAO_ONU = re.compile(
+    r"\b(?:UN|ONU|N[º°.]?\s*ONU)\s*(?:\([^)]{1,15}\))?\s*[:\-]?\s*(\d{4})\b",
+    re.IGNORECASE,
+)
 
 
 def extrair_onu(texto: str) -> str:
@@ -193,40 +329,287 @@ def extrair_onu(texto: str) -> str:
 
 
 # Data de revisão / versão da ficha
-_PADROES_DATA = [
-    re.compile(
-        r"(?:data\s+d[ae]\s+(?:revis[ãa]o|emiss[ãa]o|elabora[çc][ãa]o)|"
-        r"revis[ãa]o|revisado\s+em|vers[ãa]o\s+de)\s*[:\-]?\s*"
-        r"(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:data\s+d[ae]\s+(?:revis[ãa]o|emiss[ãa]o)|revis[ãa]o)\s*[:\-]?\s*"
-        r"(\d{4})[/.\-](\d{1,2})[/.\-](\d{1,2})",
-        re.IGNORECASE,
-    ),
-]
+# ---------------------------------------------------------------------
+# A data aparece de todo jeito: "Data: 03/07/2025", "Data de emissão:
+# 27/05/2025", "Data da última revisão: 21/12/2024". Pior: a extração do PDF
+# às vezes parte palavras e números ("r evisão", "202 4"), então os padrões
+# toleram espaços perdidos e, no fim, há uma varredura do cabeçalho.
+
+_DIA_MES_ANO = r"(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*(\d{2}(?:\s?\d)?(?:\s?\d)?)"
+_ANO_MES_DIA = r"(\d{4})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*(\d{1,2})"
+
+_ROTULO_DATA = (
+    r"(?:data\s+d[ae]?\s*(?:[úu]ltima\s+)?(?:r\s?e\s?v\s?i\s?s[ãa]o|emiss[ãa]o|"
+    r"elabora[çc][ãa]o|atualiza[çc][ãa]o)|r\s?e\s?v\s?i\s?s[ãa]o|revisado\s+em|"
+    r"vers[ãa]o\s+de|\bdata)\s*[:\-]?\s*(?:n[º°]?\s*\d+\s*)?"
+)
+
+
+def _para_data(a: str, b: str, c: str, ano_primeiro: bool = False) -> date | None:
+    """Monta a data tolerando espaços perdidos dentro dos números."""
+    try:
+        a, b, c = (int(x.replace(" ", "")) for x in (a, b, c))
+    except ValueError:
+        return None
+    if ano_primeiro:
+        ano, mes, dia = a, b, c
+    else:
+        dia, mes, ano = a, b, c
+        if ano < 100:
+            ano = 2000 + ano if ano < 70 else 1900 + ano
+    try:
+        return date(ano, mes, dia)
+    except ValueError:
+        return None
 
 
 def extrair_data_revisao(texto: str) -> date | None:
-    for i, padrao in enumerate(_PADROES_DATA):
-        achado = padrao.search(texto)
-        if not achado:
-            continue
-        a, b, c = (int(x) for x in achado.groups())
-        try:
-            if i == 0:
-                ano = c if c > 99 else (2000 + c if c < 70 else 1900 + c)
-                return date(ano, b, a)
-            return date(a, b, c)
-        except ValueError:
-            continue
+    """Data de revisão/emissão da ficha."""
+    plano = _plano(texto)
+    hoje = date.today()
+
+    for padrao, ano_primeiro in (
+        (rf"{_ROTULO_DATA}{_DIA_MES_ANO}", False),
+        (rf"{_ROTULO_DATA}{_ANO_MES_DIA}", True),
+    ):
+        for achado in re.finditer(padrao, plano, re.IGNORECASE):
+            data = _para_data(*achado.groups(), ano_primeiro=ano_primeiro)
+            if data and 1990 <= data.year and data <= hoje:
+                return data
+
+    # Último recurso: a primeira data plausível do cabeçalho da ficha.
+    for padrao, ano_primeiro in ((_DIA_MES_ANO, False), (_ANO_MES_DIA, True)):
+        for achado in re.finditer(padrao, plano[:2500]):
+            data = _para_data(*achado.groups(), ano_primeiro=ano_primeiro)
+            if data and 1990 <= data.year and data <= hoje:
+                return data
     return None
 
 
-def extrair_tipo_produto(texto: str) -> str:
-    """Chuta o tipo de produto pelas palavras do início da ficha."""
-    trecho = texto[:3000].lower()
+# ---------------------------------------------------------------------
+# Inflamável, cancerígeno e ponto de fulgor (exigências da Tenaris)
+# ---------------------------------------------------------------------
+
+# Frases H de inflamabilidade e a redação por extenso equivalente.
+_SINAIS_INFLAMAVEL = [
+    r"\bH2(?:2[0-6]|28|4[12]|50|51|52)\b",
+    r"(?:l[íi]quido|s[óo]lido|g[áa]s|aeross[óo]l)\w*\s+(?:e\s+vapor\w*\s+)?"
+    r"(?:extremamente\s+|altamente\s+)?inflam[áa]ve",
+    r"inflam[áa]ve\w*\s*[,\-–]?\s*(?:categoria|cat\.?)\s*[1-4]",
+    r"pirof[óo]ric",
+]
+
+
+def extrair_nome_comercial(texto: str) -> str:
+    """Nome comercial do produto (Seção 1 ou cabeçalho da primeira página)."""
+    plano = _plano("\n".join(filter(None, [texto[:4000], _secao(texto, 1)])))
+    valor = _valor_rotulado(plano, _ROTULOS_NOME_PLANO, limite=120)
+    if valor and not _sem_informacao(valor):
+        return valor
+    # último recurso: a busca linha a linha, que atende fichas fora do padrão
+    return _valor_apos_rotulo(
+        "\n".join(filter(None, [texto[:3000], _secao(texto, 1)])), _ROTULOS_NOME
+    )
+
+
+def extrair_fabricante(texto: str) -> str:
+    """Empresa responsável pelo produto (Seção 1)."""
+    plano = _plano("\n".join(filter(None, [texto[:4000], _secao(texto, 1)])))
+    for exigir in (True, False):
+        valor = _valor_rotulado(plano, _ROTULOS_EMPRESA, limite=120,
+                                exigir_dois_pontos=exigir)
+        # "Detalhes do fornecedor / Fabricante / Empresa X" deixa o rótulo colado
+        valor = re.sub(
+            r"^(?:fabricante|fornecedor|empresa|raz[ãa]o\s+social)\b\s*:?\s*",
+            "", valor, flags=re.IGNORECASE,
+        ).strip()
+        if valor and not _sem_informacao(valor):
+            return valor
+    return ""
+
+
+def extrair_uso_recomendado(texto: str) -> str:
+    """Usos recomendados pelo fabricante (Seção 1) - sugestão de finalidade."""
+    plano = _plano("\n".join(filter(None, [texto[:4000], _secao(texto, 1)])))
+    for exigir in (True, False):
+        valor = _valor_rotulado(plano, _ROTULOS_USO, limite=300,
+                                exigir_dois_pontos=exigir)
+        # numeração de subseção ("1.4.") gruda no fim do valor
+        valor = re.sub(r"\s*\d+(?:\.\d+)*\.?\s*$", "", valor).strip()
+        if valor and not _sem_informacao(valor) and not valor.lower().startswith("nenhuma"):
+            return valor
+    return ""
+
+
+# A classificação é uma lista ("Corrosivo - Cat. 1; Lesões oculares - Cat. 1"),
+# então ela só termina no próximo assunto de verdade - não em cada palavra que
+# por acaso também é nome de campo em outra seção.
+_FIM_CLASSIFICACAO = [
+    r"Sistema\s+de\s+classifica", r"Elementos?\s+d[oe]\s+r[óo]tulo",
+    r"Elementos?\s+de\s+rotulagem", r"Pictogramas?", r"Palavras?\s+de\s+advert",
+    r"Frases?\s+de\s+(?:perigo|precau)", r"Outros\s+perigos",
+    r"Ades[ãa]o\s+ao\s+Sistema", r"Ado[çc][ãa]o\s+do\s+Sistema",
+    r"P[áa]gina\s*:",
+]
+
+
+def extrair_classificacao_ghs(texto: str) -> str:
+    """Classificação de perigo como a ficha declara (Seção 2)."""
+    for trecho in (_secao(texto, 2), texto[:12000]):
+        if not trecho:
+            continue
+        plano = _plano(trecho)
+        for exigir in (True, False):
+            valor = _valor_rotulado(
+                plano, _ROTULOS_CLASSIFICACAO, limite=255,
+                exigir_dois_pontos=exigir, terminadores=_FIM_CLASSIFICACAO,
+            )
+            # "Classificação de acordo com GHS BR (ABNT NBR 14725: 2023)" é
+            # cabeçalho, não classificação: pula o que está entre parênteses.
+            valor = re.sub(
+                r"^(?:classifica[çc][ãa]o\s+)?(?:de\s+)?acordo\s+com[^)]{0,90}\)\s*",
+                "", valor, flags=re.IGNORECASE,
+            ).strip(" :-")
+            # o corte no rótulo seguinte às vezes deixa uma preposição solta
+            valor = re.sub(
+                r"\s+(?:pel[oa]s?|por|de|do|da|dos|das|e|com|no|na|em|conforme)$",
+                "", valor, flags=re.IGNORECASE,
+            ).strip(" :;,-")
+            if len(valor) >= 4 and not _sem_informacao(valor):
+                return _cortar(valor, 255)
+    return ""
+
+
+def _cortar(valor: str, limite: int) -> str:
+    """Corta no último separador antes do limite, para não partir palavra."""
+    if len(valor) <= limite:
+        return valor
+    pedaco = valor[:limite]
+    quebra = max(pedaco.rfind(";"), pedaco.rfind(","))
+    return (pedaco[:quebra] if quebra > limite // 2 else pedaco).strip(" ;,-")
+
+
+def extrair_ponto_fulgor(texto: str) -> str:
+    """Ponto de fulgor, como a ficha declara (Seção 9)."""
+    plano = _plano(_secao(texto, 9) or texto)
+    return _valor_rotulado(plano, _ROTULOS_FULGOR, limite=60)
+
+
+def _fulgor_em_celsius(valor: str) -> float | None:
+    """Converte '13 °C', '>93 C', '55,5 ºC' num número. None quando não há."""
+    achado = re.search(r"(-?\d{1,3}(?:[.,]\d+)?)\s*°?\s*[cC]\b", valor or "")
+    if not achado:
+        return None
+    try:
+        return float(achado.group(1).replace(",", "."))
+    except ValueError:
+        return None
+
+
+def extrair_inflamavel(texto: str) -> str:
+    """'SIM', 'NAO' ou '' quando a ficha não permite concluir."""
+    plano = _plano(texto)
+    secao2 = _plano(_secao(texto, 2))
+    fulgor = _fulgor_em_celsius(extrair_ponto_fulgor(texto))
+
+    for padrao in _SINAIS_INFLAMAVEL:
+        if re.search(padrao, secao2 or plano, re.IGNORECASE):
+            return "SIM"
+    # Um ponto de fulgor medido até 93 °C caracteriza líquido inflamável (GHS).
+    if fulgor is not None and fulgor <= 93:
+        return "SIM"
+
+    # Sem sinal de inflamabilidade: só concluímos "Não" quando a ficha
+    # realmente declarou a classificação de perigos.
+    classificacao = _valor_rotulado(plano, _ROTULOS_CLASSIFICACAO, limite=400)
+    inflamabilidade = _valor_rotulado(
+        _plano(_secao(texto, 9) or texto), _ROTULOS_INFLAMABILIDADE, limite=120
+    )
+    sem_perigo_de_fogo = re.search(
+        r"n[ãa]o\s+(?:é\s+esperado\s+que\s+o\s+produto\s+)?(?:apresent\w*|possui\w*|oferec\w*)"
+        r"[^.]{0,60}(?:perigo\s+de\s+)?inc[êe]ndio",
+        plano,
+        re.IGNORECASE,
+    )
+    if classificacao or sem_perigo_de_fogo or inflamabilidade:
+        return "NAO"
+    return ""
+
+
+_SINAIS_CANCERIGENO = [
+    r"\bH35[01]\b",
+    r"pode\s+(?:provocar|causar)\s+c[âa]ncer",
+    r"suspeito\s+de\s+(?:provocar|causar)\s+c[âa]ncer",
+    r"carcinogenicidade\s*[-–:]?\s*categoria\s*(?:1|2)",
+]
+
+_NEGATIVAS = (
+    r"n[ãa]o\s+é\s+esperado", r"n[ãa]o\s+(?:é\s+)?classificad", r"n[ãa]o\s+apresenta",
+    r"n[ãa]o\s+atende\s+aos\s+crit[ée]rios", r"n[ãa]o\s+h[áa]\s+(?:dados|evid)",
+    r"n[ãa]o\s+cancer[íi]gen", r"n[ãa]o\s+carcinog",
+)
+
+
+def extrair_cancerigeno(texto: str) -> str:
+    """'SIM', 'NAO' ou '' - a Seção 11 é quem responde."""
+    plano = _plano(texto)
+    for padrao in _SINAIS_CANCERIGENO:
+        if re.search(padrao, plano, re.IGNORECASE):
+            return "SIM"
+
+    campo = _valor_rotulado(
+        _plano(_secao(texto, 11) or texto), _ROTULOS_CARCINO, limite=300
+    )
+    if campo and not _sem_informacao(campo):
+        if any(re.search(p, campo, re.IGNORECASE) for p in _NEGATIVAS):
+            return "NAO"
+    return ""
+
+
+# ---------------------------------------------------------------------
+# Categoria química (lista do sistema)
+# ---------------------------------------------------------------------
+
+_PISTAS_CATEGORIA = {
+    "Ácido": ["ácido", "acido", "acid "],
+    "Base / Álcali": ["hidróxido", "hidroxido", "soda cáustica", "soda caustica",
+                      "alcalin", "álcali", "alcali", "amônia", "amonia"],
+    "Solvente": ["solvente", "thinner", "diluente", "acetona", "xileno", "tolueno",
+                 "álcool", "alcool", "isopropanol"],
+    "Tinta / Revestimento": ["tinta", "verniz", "primer", "esmalte", "revestimento",
+                             "pintura", "demarca", "sinalizaç"],
+    "Óleo / Lubrificante": ["lubrific", "graxa", "óleo", "oleo", "fluido hidr"],
+    "Gás": ["gás comprimido", "gas comprimido", "acetileno", "oxigênio", "oxigenio",
+            "nitrogênio", "nitrogenio", "argônio", "argonio"],
+    "Detergente / Limpeza": ["detergente", "desengraxa", "sabão", "sabao",
+                             "limpador", "limpeza"],
+    "Reagente de laboratório": ["reagente", "p.a.", "grau analítico", "grau analitico",
+                                "titulaç", "padrão analítico"],
+    "Aditivo de processo": ["coagulante", "floculante", "biocida", "inibidor",
+                            "antiespumante", "aditivo", "tratamento de água",
+                            "tratamento de agua", "dispersante"],
+    "Outros": ["raticida", "rodenticida", "inseticida", "fungicida", "herbicida",
+               "praguicida", "controle de roedores", "controle de pragas"],
+}
+
+
+def extrair_categoria(nome: str = "", uso: str = "", texto: str = "") -> str:
+    """Categoria química provável.
+
+    Olha o nome do produto e o uso recomendado - não o documento inteiro,
+    onde a lista de ingredientes cheia de "ácido" confundiria tudo.
+    """
+    trecho = _plano(f"{nome} {uso} {texto[:400]}").lower()
+    for categoria, pistas in _PISTAS_CATEGORIA.items():
+        for pista in pistas:
+            if pista in trecho:
+                return categoria
+    return ""
+
+
+def extrair_tipo_produto(nome: str = "", uso: str = "", texto: str = "") -> str:
+    """Tipo de produto provável, pelo nome e pelo uso recomendado."""
+    trecho = _plano(f"{nome} {uso} {texto[:1500]}").lower()
     pistas = {
         "Hidráulico": ["fluido hidr", "óleo hidr", "oleo hidr", "hidráulic"],
         "Emulsão": ["emuls", "solúvel de corte", "soluvel de corte"],
@@ -258,7 +641,10 @@ def _secao(texto: str, numero: int) -> str:
         re.IGNORECASE,
     )
     trecho = texto[inicio.start():]
-    return trecho[: fim.start()] if fim else trecho[:6000]
+    trecho = trecho[: fim.start()] if fim else trecho[:6000]
+    # Em várias fichas os cabeçalhos saem fora de ordem na extração do PDF e
+    # o recorte vira só o título. Seção de verdade não tem 200 caracteres.
+    return trecho if len(trecho) >= 200 else ""
 
 
 # ---------------------------------------------------------------------
@@ -269,10 +655,15 @@ CAMPOS_AUTOMATICOS = (
     "nome_comercial",
     "fabricante",
     "numero_cas",
-    "classificacao_ghs",
-    "estado_fisico",
-    "onu_numero",
+    "categoria",
     "tipo_produto",
+    "estado_fisico",
+    "aplicacao",
+    "classificacao_ghs",
+    "onu_numero",
+    "inflamavel",
+    "cancerigeno",
+    "ponto_fulgor",
     "riscos",
     "data_revisao_fds",
 )
@@ -285,15 +676,33 @@ def extrair(texto: str) -> dict:
     secao1 = "\n".join(filter(None, [texto[:3000], _secao(texto, 1)]))
     riscos = extrair_classes_risco(texto)
     data = extrair_data_revisao(texto)
+
+    nome = extrair_nome_comercial(texto)
+    uso = extrair_uso_recomendado(texto)
+    fulgor = extrair_ponto_fulgor(texto)
+
+    categoria = extrair_categoria(nome, uso, texto)
+    tipo = extrair_tipo_produto(nome, uso, texto)
+    if not tipo and categoria:
+        tipo = "Outros"  # a lista de tipos é curta; "Outros" é o honesto aqui
+
     return {
-        "nome_comercial": _valor_apos_rotulo(secao1, _ROTULOS_NOME),
-        "fabricante": _valor_apos_rotulo(secao1, _ROTULOS_FABRICANTE),
+        "nome_comercial": nome,
+        "fabricante": extrair_fabricante(texto) or _valor_apos_rotulo(
+            secao1, _ROTULOS_FABRICANTE
+        ),
         "numero_cas": extrair_cas(texto),
-        "classificacao_ghs": "; ".join(riscos),
-        "riscos": riscos,
+        "categoria": categoria,
+        "tipo_produto": tipo,
         "estado_fisico": extrair_estado_fisico(texto),
+        "aplicacao": uso,
+        "classificacao_ghs": extrair_classificacao_ghs(texto) or "; ".join(riscos),
+        "riscos": riscos,
         "onu_numero": extrair_onu(texto),
-        "tipo_produto": extrair_tipo_produto(texto),
+        "inflamavel": extrair_inflamavel(texto),
+        "cancerigeno": extrair_cancerigeno(texto),
+        # "Não disponível" não é resposta: melhor deixar em branco para a pessoa.
+        "ponto_fulgor": "" if _sem_informacao(fulgor) else fulgor,
         "data_revisao_fds": data.isoformat() if data else "",
     }
 

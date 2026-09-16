@@ -30,6 +30,7 @@ from models import (
     CLASSES_RISCO,
     DOCUMENTOS_OBRIGATORIOS,
     ESTADOS_FISICOS,
+    PRAZOS_UTILIZACAO,
     ETAPA_FINAL,
     FABRICAS,
     FDS_ALERTA_MESES,
@@ -42,16 +43,21 @@ from models import (
     ICONE_SECAO,
     ROTULOS_GRUPO_ARQUIVO,
     SECOES_RECURSO,
+    SIM_NAO,
     SITUACOES_FDS,
     TIPOS_MIDIA,
     STATUS,
     STATUS_ABERTOS,
     TIPOS_DOCUMENTO,
     TIPOS_PRODUTO,
+    UNIDADES_CONSUMO,
+    UNIDADES_ITEM,
     Documento,
     LogAuditoria,
     Notificacao,
     AreaAprovador,
+    ItemKit,
+    PontoColetaKit,
     Produto,
     Recurso,
     RecursoArquivo,
@@ -292,7 +298,7 @@ def get(req, erro: str = "", ok: str = ""):
         ),
         ui.cartao_atalho(
             ui.ICONES["kit"], "Kit Ambiental",
-            "Produtos e materiais aprovados para compor os kits de contenção ambiental.",
+            "O que cada kit de contenção possui, para que serve e onde encontrar.",
             "/kit-ambiental", "verde",
         ),
         ui.cartao_atalho(
@@ -747,6 +753,17 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
             cls="secao",
         ) if usuario is None else None,
         Fieldset(
+            Legend("Solicitante terceiro"),
+            ui.campo(
+                "Nome e empresa do solicitante terceiro", "solicitante_terceiro",
+                valor=dados.get("solicitante_terceiro", ""),
+                placeholder="Ex.: João Pereira - Construtora Alfa",
+                ajuda="Preencha apenas quando a solicitação vier de uma empresa "
+                      "terceira. Em branco, vale o solicitante Tenaris acima.",
+            ),
+            cls="secao",
+        ),
+        Fieldset(
             Legend("Identificação do produto"),
             Div(
                 ui.campo("Nome comercial", "nome_comercial",
@@ -794,18 +811,42 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
             ui.campo(
                 "Finalidade de uso", "aplicacao", valor=dados.get("aplicacao", ""),
                 linhas=3, obrigatório=True,
-                ajuda="Por que o produto é necessário e como será aplicado.",
+                ajuda="Onde e como o produto será aplicado no processo.",
+            ),
+            ui.campo(
+                "Necessidade de uso", "necessidade_uso",
+                valor=dados.get("necessidade_uso", ""), linhas=3, obrigatório=True,
+                ajuda="Por que a planta precisa deste produto? O que deixa de ser "
+                      "feito (ou qual o risco) se ele não for aprovado?",
+            ),
+            ui.campo(
+                "Motivo do desenvolvimento", "motivo_desenvolvimento",
+                valor=dados.get("motivo_desenvolvimento", ""), linhas=2,
+                obrigatório=True,
+                ajuda="Motivo para desenvolver um produto novo em vez de usar um "
+                      "já aprovado (substituição, exigência de cliente, melhoria...).",
             ),
             Div(
                 ui.campo("Prazo de utilização", "prazo_utilizacao",
                          valor=dados.get("prazo_utilizacao", ""), obrigatório=True,
-                         placeholder="Ex.: 12 meses / uso contínuo"),
+                         opcoes=PRAZOS_UTILIZACAO),
                 ui.campo("Quantidade prevista", "consumo_estimado",
                          valor=dados.get("consumo_estimado", ""), obrigatório=True,
-                         placeholder="Ex.: 200"),
+                         placeholder="Ex.: 200",
+                         ajuda="Consumo em condições máximas."),
                 ui.campo("Unidade de medida", "unidade",
                          valor=dados.get("unidade", ""), obrigatório=True,
-                         placeholder="L/mês, kg/mês..."),
+                         opcoes=UNIDADES_CONSUMO),
+                cls="linha-form",
+            ),
+            Div(
+                ui.campo("Funcionários expostos", "funcionarios_expostos", "number",
+                         dados.get("funcionarios_expostos", ""), True,
+                         ajuda="Quantos colaboradores ficam expostos ao produto "
+                               "durante o uso."),
+                ui.campo("Função dos colaboradores expostos", "funcoes_expostas",
+                         valor=dados.get("funcoes_expostas", ""), obrigatório=True,
+                         placeholder="Ex.: operador de pintura, mecânico de manutenção"),
                 cls="linha-form",
             ),
             cls="secao",
@@ -847,6 +888,23 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                 ui.campo("Validade da licença", "validade_licenca", tipo="date",
                          valor=dados.get("validade_licenca", ""),
                          ajuda="Somente para produto controlado."),
+                cls="linha-form",
+            ),
+            Div(
+                ui.campo("Inflamável", "inflamavel",
+                         valor=dados.get("inflamavel", ""), obrigatório=True,
+                         opcoes=[(k, v) for k, v in SIM_NAO.items()],
+                         ajuda=auto("inflamavel") or "Seção 2 da FDS."),
+                ui.campo("Cancerígeno", "cancerigeno",
+                         valor=dados.get("cancerigeno", ""), obrigatório=True,
+                         opcoes=[(k, v) for k, v in SIM_NAO.items()],
+                         ajuda="Produto com agentes cancerígenos? Seção 11 da FDS."),
+                ui.campo("Ponto de fulgor", "ponto_fulgor",
+                         valor=dados.get("ponto_fulgor", ""),
+                         placeholder="Ex.: 32 °C",
+                         ajuda=auto("ponto_fulgor")
+                               or "Obrigatório quando o produto for inflamável "
+                                  "(seção 9 da FDS)."),
                 cls="linha-form",
             ),
             Div(
@@ -948,7 +1006,7 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
 
 
 @rt("/solicitacoes/nova")
-async def post(req):
+async def post(req, sess):
     """Passo 3: valida tudo, grava a solicitação e dispara o fluxo."""
     usuario = eu(req)
     form = await req.form()
@@ -988,9 +1046,15 @@ async def post(req):
         ("estado_fisico", "Estado físico"),
         ("area_solicitante", "Área solicitante"),
         ("aplicacao", "Finalidade de uso"),
+        ("necessidade_uso", "Necessidade de uso"),
+        ("motivo_desenvolvimento", "Motivo do desenvolvimento"),
         ("prazo_utilizacao", "Prazo de utilização"),
         ("consumo_estimado", "Quantidade prevista"),
         ("unidade", "Unidade de medida"),
+        ("funcionarios_expostos", "Funcionários expostos"),
+        ("funcoes_expostas", "Função dos colaboradores expostos"),
+        ("inflamavel", "Inflamável"),
+        ("cancerigeno", "Cancerígeno"),
         ("classificacao_ghs", "Classificação GHS"),
         ("observacoes", "Observações"),
     ]
@@ -1006,8 +1070,27 @@ async def post(req):
         faltando.append("Classe de risco")
     if revisao is None:
         faltando.append("Data de revisão da FDS")
+    if dados.get("inflamavel") not in SIM_NAO:
+        faltando.append("Inflamável")
+    if dados.get("cancerigeno") not in SIM_NAO:
+        faltando.append("Cancerígeno")
+    if dados.get("prazo_utilizacao") and dados["prazo_utilizacao"] not in PRAZOS_UTILIZACAO:
+        faltando.append("Prazo de utilização")
+    if dados.get("unidade") and dados["unidade"] not in UNIDADES_CONSUMO:
+        faltando.append("Unidade de medida")
     if faltando:
-        return voltar("Preencha os campos obrigatórios: " + ", ".join(faltando) + ".")
+        return voltar("Preencha os campos obrigatórios: " + ", ".join(dict.fromkeys(faltando)) + ".")
+
+    # O ponto de fulgor só faz sentido (e é exigido) para inflamáveis.
+    if dados.get("inflamavel") == "SIM" and not dados.get("ponto_fulgor"):
+        return voltar(
+            "Produto inflamável: informe o ponto de fulgor (seção 9 da FDS)."
+        )
+
+    expostos = (dados.get("funcionarios_expostos") or "").strip()
+    if not expostos.isdigit():
+        return voltar("Funcionários expostos deve ser um número (ex.: 4).")
+    dados["funcionarios_expostos"] = int(expostos)
 
     if usuario is None and "@" not in (dados.get("solicitante_email") or ""):
         return voltar("Informe um e-mail corporativo válido.")
@@ -1070,9 +1153,106 @@ async def post(req):
         pid = produto.id
 
     _RASCUNHOS.pop(token, None)
-    return RedirectResponse(
-        _msg(f"/produtos/{pid}", "ok", "Solicitação enviada para aprovação."),
-        status_code=303,
+    # Quem cadastrou sem login precisa continuar enxergando o que acabou de
+    # enviar - a ficha só fica pública depois de aprovada.
+    _guardar_minha(sess, pid)
+    return RedirectResponse(f"/solicitacoes/recibo/{pid}", status_code=303)
+
+
+# ---------------------------------------------------------------------
+# Comprovante do envio
+# ---------------------------------------------------------------------
+# Sem isto, quem cadastra sem login é jogado na ficha do produto - que ainda
+# não está aprovada e, portanto, não é pública. A pessoa terminava o
+# formulário e via "produto não disponível para consulta pública".
+
+_MINHAS_NA_SESSAO = 20
+
+
+def _guardar_minha(sess, pid: int) -> None:
+    """Marca na sessão do navegador que esta pessoa enviou esta solicitação."""
+    try:
+        minhas = [int(x) for x in (sess.get("minhas") or [])]
+    except (TypeError, ValueError):
+        minhas = []
+    if pid not in minhas:
+        minhas.append(pid)
+    sess["minhas"] = minhas[-_MINHAS_NA_SESSAO:]
+
+
+def _e_minha(sess, pid: int) -> bool:
+    try:
+        return pid in [int(x) for x in (sess.get("minhas") or [])]
+    except (TypeError, ValueError):
+        return False
+
+
+@rt("/solicitacoes/recibo/{pid:int}")
+def get(req, sess, pid: int):
+    """Confirmação do envio, com o protocolo e o que acontece daqui pra frente."""
+    usuario = eu(req)
+    if usuario is None and not _e_minha(sess, pid):
+        return RedirectResponse(f"/produtos/{pid}", status_code=303)
+
+    with db_session() as s:
+        produto = s.get(Produto, pid)
+        if not produto:
+            return ui.pagina("Solicitação não encontrada",
+                             ui.alerta("Registro inexistente.", "erro"), usuario=usuario)
+        codigo = produto.codigo_interno
+        nome = produto.nome_comercial
+        fabricante = produto.fabricante or "-"
+        email = produto.solicitante.email if produto.solicitante else ""
+
+    areas = ", ".join(rotulo for _, rotulo in AREAS_APROVACAO)
+
+    return ui.pagina(
+        "Solicitação enviada",
+        ui.alerta(
+            f"Pronto! A solicitação foi registrada com o protocolo {codigo}.", "ok"
+        ),
+        Div(
+            Div(H2("Comprovante"), cls="card-titulo"),
+            Div(
+                ui.item_ficha("Protocolo", Span(codigo, cls="mono")),
+                ui.item_ficha("Produto", B(nome)),
+                ui.item_ficha("Fabricante", fabricante),
+                ui.item_ficha("Avisos enviados para", email),
+                cls="ficha",
+            ),
+            cls="card",
+        ),
+        Div(
+            Div(H2("O que acontece agora"), cls="card-titulo"),
+            Ol(
+                Li(B("Análise das áreas. "),
+                   f"A solicitação está com {areas} ao mesmo tempo - não há ordem "
+                   "entre elas, cada uma dá o seu parecer quando puder."),
+                Li(B("Aprovador Final. "),
+                   "Concluídas as quatro áreas, a solicitação segue para o "
+                   "Aprovador Final, que fecha a aprovação."),
+                Li(B("Avisos. "),
+                   "Você recebe um e-mail a cada parecer registrado e outro quando "
+                   "o fluxo terminar. Se nada se mover, as áreas são cobradas "
+                   "automaticamente a cada 7 dias."),
+                cls="lista-passos",
+            ),
+            P(
+                "Enquanto o servidor de e-mail da Tenaris não estiver configurado, "
+                "os avisos ficam registrados dentro do sistema em vez de sair por "
+                "e-mail.",
+                cls="pequeno texto-mudo",
+            ) if not config.SMTP_ATIVO else None,
+            cls="card",
+        ),
+        Div(
+            A("Acompanhar esta solicitação", href=f"/produtos/{pid}", cls="btn"),
+            A("Cadastrar outro produto", href="/solicitacoes/nova", cls="btn secundario"),
+            A("Voltar ao início", href="/", cls="btn secundario"),
+            cls="barra-acoes",
+        ),
+        usuario=usuario,
+        subtitulo=f"{codigo} - {nome}",
     )
 
 
@@ -1564,40 +1744,716 @@ def _em_construcao(titulo: str, subtitulo: str, resumo, itens, tecnico=None,
     )
 
 
-@rt("/kit-ambiental")
-def get(req):
-    """Kit Ambiental: produtos e materiais aprovados para os kits de contenção."""
-    usuario = eu(req)
-    with db_session() as s:
-        candidatos = servicos.buscar_produtos(
-            s, "", somente_aprovados=True, limite=None
+# =====================================================================
+# Kit Ambiental (informativo)
+# =====================================================================
+#
+# A composição é definida por TIPO de kit (Kit A, Kit B, ...) e vale para
+# toda a Tenaris. Cada fábrica informa apenas onde os seus kits ficam.
+# Consulta aberta a qualquer colaborador; manutenção com Meio Ambiente,
+# Segurança e Administrador.
+#
+
+
+def _pode_kit(req) -> bool:
+    return servicos.pode_editar_kit(eu(req))
+
+
+async def _foto_do_form(form, campo: str = "foto") -> tuple[dict | None, str | None]:
+    enviado = form.get(campo)
+    if enviado is None or not getattr(enviado, "filename", ""):
+        return None, None
+    conteudo = await enviado.read()
+    if not conteudo:
+        return None, None
+    if len(conteudo) > config.MAX_UPLOAD_BYTES:
+        return None, f"A imagem excede o limite de {config.MAX_UPLOAD_MB} MB."
+    tipo = (getattr(enviado, "content_type", "") or "").lower()
+    if not tipo.startswith("image/"):
+        return None, "O arquivo da foto precisa ser uma imagem (JPG, PNG...)."
+    return {"conteudo": conteudo, "content_type": tipo}, None
+
+
+def _cartao_kit(kit, pode: bool):
+    fabricas = kit.fabricas
+    return Div(
+        Div(
+            Div(kit.codigo, cls="selo"),
+            Div(
+                H3(kit.nome),
+                P(kit.utilidade or "Utilidade ainda não descrita.",
+                  cls="texto-mudo" if not kit.utilidade else None),
+                cls="txt",
+            ),
+            cls="kit-topo",
+        ),
+        Div(
+            Span(f"{len(kit.itens_ativos)} item(ns)", cls="chip tipo"),
+            Span(f"{len(kit.pontos_ativos)} ponto(s) de coleta", cls="chip"),
+            *[Span(f, cls="chip fabrica") for f in fabricas],
+            Span("composição a definir", cls="chip controlado vencida")
+            if kit.sem_composicao
+            else None,
+            cls="tags",
+        ),
+        Div(
+            A("Ver o que tem no kit", href=f"/kit-ambiental/{kit.id}", cls="btn"),
+            A("Editar", href=f"/kit-ambiental/{kit.id}?editar=1", cls="btn secundario")
+            if pode
+            else None,
+            cls="barra-acoes",
+        ),
+        cls="kit-card",
+    )
+
+
+def _tabela_pontos(agrupado: dict, mostrar_kit: bool = True, pode: bool = False):
+    if not agrupado:
+        return ui.vazio("Nenhum ponto de coleta cadastrado ainda.", "⌖")
+    blocos = []
+    for fabrica, pontos in agrupado.items():
+        blocos.append(
+            Div(
+                Div(
+                    H3(fabrica),
+                    Span(f"{len(pontos)} kit(s)", cls="qtd"),
+                    cls="fabrica-titulo",
+                ),
+                Div(
+                    Table(
+                        Thead(
+                            Tr(
+                                Th("Kit") if mostrar_kit else None,
+                                Th("Onde fica"),
+                                Th("Quem procurar"),
+                                Th("Observações"),
+                                Th("") if pode else None,
+                            )
+                        ),
+                        Tbody(
+                            *[
+                                Tr(
+                                    Td(
+                                        A(p.kit.codigo, href=f"/kit-ambiental/{p.kit_id}",
+                                          cls="mono")
+                                    ) if mostrar_kit else None,
+                                    Td(B(p.local)),
+                                    Td(p.contato or Span("-", cls="texto-mudo"),
+                                       cls="pequeno"),
+                                    Td(p.observacoes or "-", cls="pequeno"),
+                                    Td(
+                                        Form(
+                                            Button("remover", cls="tirar", type="submit"),
+                                            method="post",
+                                            action=f"/kit-ambiental/pontos/{p.id}/remover",
+                                        ),
+                                        cls="nowrap",
+                                    )
+                                    if pode
+                                    else None,
+                                )
+                                for p in pontos
+                            ]
+                        ),
+                        cls="dados",
+                    ),
+                    style="overflow-x:auto",
+                ),
+                cls="fabrica-bloco",
+            )
         )
-    return _em_construcao(
+    return Div(*blocos, cls="fabricas")
+
+
+@rt("/kit-ambiental")
+def get(req, fabrica: str = "", ok: str = "", erro: str = ""):
+    """Kit Ambiental: o que cada kit tem e onde encontrar."""
+    usuario = eu(req)
+    pode = _pode_kit(req)
+    with db_session() as s:
+        kits = servicos.listar_kits(s)
+        resumo = servicos.resumo_kits(s)
+        agrupado = servicos.pontos_por_fabrica(s, fabrica)
+
+    filtro = Form(
+        Div(
+            ui.campo("Fábrica", "fabrica", valor=fabrica, opcoes=FABRICAS),
+            Div(
+                Button("Filtrar", cls="btn", type="submit"),
+                A("Limpar", href="/kit-ambiental", cls="btn secundario"),
+                cls="acao",
+            ),
+            cls="filtros",
+        ),
+        method="get",
+        action="/kit-ambiental",
+    )
+
+    aviso = (
+        ui.alerta(
+            Span(
+                B("Composição pendente: "),
+                "os kits ",
+                ", ".join(k.codigo for k in resumo["sem_composicao"]),
+                " ainda não têm itens cadastrados.",
+            ),
+            "aviso",
+        )
+        if pode and resumo["sem_composicao"]
+        else None
+    )
+
+    return ui.pagina(
         "Kit Ambiental",
-        "Produtos e materiais aprovados para compor os kits de contenção ambiental",
-        "Lista dos produtos químicos e materiais absorventes liberados para uso nos "
-        "kits ambientais da planta, para que quem monta ou repõe um kit saiba "
-        "exatamente o que pode entrar nele.",
-        [
-            "Relação dos itens aprovados para compor o kit (absorventes, "
-            "neutralizantes, barreiras de contenção, EPI).",
-            "Quantidade mínima de cada item por kit.",
-            "Link direto para a FDS e a Ficha de Emergência de cada item.",
-            "Indicação de quais produtos químicos da planta cada item atende.",
-        ],
-        [
-            "Marcar no cadastro do produto se ele integra o kit ambiental "
-            "(campo novo em `produtos`).",
-            "Tabela de itens do kit para os materiais que não são produtos "
-            "químicos cadastrados (absorvente, manta, pá antifaísca).",
-            "Definir quem mantém essa lista - sugestão: Meio Ambiente.",
-        ],
+        ui.alerta(ok, "sucesso") if ok else None,
+        ui.alerta(erro, "erro") if erro else None,
+        aviso,
+        Div(
+            Div(
+                H2("Tipos de kit"),
+                Span("A composição é a mesma em todas as fábricas", cls="direita"),
+                cls="card-titulo",
+            ),
+            Div(*[_cartao_kit(k, pode) for k in kits], cls="kits-grade")
+            if kits
+            else ui.vazio("Nenhum kit cadastrado ainda.", "▣"),
+            cls="card",
+        ),
+        Div(
+            Div(
+                H2("Onde encontrar"),
+                Span(
+                    f"{sum(len(p) for p in agrupado.values())} ponto(s)",
+                    cls="direita",
+                ),
+                cls="card-titulo",
+            ),
+            filtro,
+            Hr(style="border:0;border-top:1px solid var(--cinza-fundo);margin:1rem 0"),
+            _tabela_pontos(agrupado, pode=pode),
+            cls="card",
+        ),
         usuario=usuario,
-        atalhos=[
-            A(f"Ver os {len(candidatos)} produtos aprovados", href="/produtos",
-              cls="btn secundario"),
-            A("Consultar FDS", href="/fds", cls="btn secundario"),
-        ],
+        subtitulo="O que cada kit de contenção possui, para que serve e onde encontrar",
+        acoes=[A("+ Novo tipo de kit", href="/kit-ambiental/novo", cls="btn")]
+        if pode
+        else None,
+    )
+
+
+# ------------------------------------------------------------- Detalhe
+def _grade_itens(kit, pode: bool):
+    itens = kit.itens_ativos
+    if not itens:
+        return ui.vazio(
+            "A composição deste kit ainda não foi cadastrada.", "▣"
+        )
+    cartoes = []
+    for item in itens:
+        cartoes.append(
+            Div(
+                Div(
+                    Img(src=f"/kit-ambiental/itens/{item.id}/foto", alt=item.nome)
+                    if item.tem_foto
+                    else Span("sem foto", cls="sem-foto"),
+                    cls="item-foto",
+                ),
+                Div(
+                    Div(
+                        B(item.nome),
+                        Span(item.quantidade_label, cls="chip versao")
+                        if item.quantidade
+                        else None,
+                        cls="item-nome",
+                    ),
+                    P(item.utilidade or "Utilidade não descrita.",
+                      cls="item-uso" + ("" if item.utilidade else " texto-mudo")),
+                    Div(
+                        A(
+                            f"FDS - {item.produto.nome_comercial}",
+                            href=f"/produtos/{item.produto_id}",
+                            cls="chip info",
+                        )
+                        if item.produto_id and item.produto
+                        else None,
+                        A("editar", href=f"/kit-ambiental/itens/{item.id}/editar",
+                          cls="pequeno") if pode else None,
+                        Form(
+                            Button("remover", cls="tirar", type="submit"),
+                            method="post",
+                            action=f"/kit-ambiental/itens/{item.id}/remover",
+                            style="display:inline",
+                        ) if pode else None,
+                        cls="item-acoes",
+                    ),
+                    cls="item-txt",
+                ),
+                cls="item-kit",
+            )
+        )
+    return Div(*cartoes, cls="itens-kit")
+
+
+@rt("/kit-ambiental/{kid:int}")
+def get(req, kid: int, editar: str = "", ok: str = "", erro: str = ""):
+    usuario = eu(req)
+    pode = _pode_kit(req)
+    with db_session() as s:
+        kit = servicos.obter_kit(s, kid)
+        if not kit:
+            return RedirectResponse(
+                _msg("/kit-ambiental", "erro", "Kit não encontrado."), status_code=303
+            )
+        produtos = servicos.buscar_produtos(s, somente_aprovados=True, limite=None)
+        opcoes_produto = [
+            (str(p.id), f"{p.codigo_interno} - {p.nome_comercial}") for p in produtos
+        ]
+
+    agrupado: dict = {}
+    for ponto in kit.pontos_ativos:
+        agrupado.setdefault(ponto.fabrica, []).append(ponto)
+
+    ficha = Div(
+        Div(
+            Div(kit.codigo, cls="selo grande"),
+            Div(
+                Div("Para que serve", cls="rot"),
+                Div(kit.utilidade or Span("Ainda não descrito.", cls="texto-mudo"),
+                    cls="val"),
+                Div("Quando usar", cls="rot", style="margin-top:.8rem"),
+                Div(kit.quando_usar or Span("Ainda não descrito.", cls="texto-mudo"),
+                    cls="val"),
+                cls="txt",
+            ),
+            cls="kit-topo",
+        ),
+        cls="card",
+    )
+
+    form_editar = (
+        Div(
+            Div(H2("Dados do kit"), cls="card-titulo"),
+            Form(
+                Div(
+                    ui.campo("Código", "codigo", valor=kit.codigo, obrigatório=True,
+                             ajuda="Ex.: KIT A"),
+                    ui.campo("Nome", "nome", valor=kit.nome, obrigatório=True),
+                    cls="linha-form",
+                ),
+                ui.campo("Para que serve", "utilidade", valor=kit.utilidade or "",
+                         linhas=2),
+                ui.campo("Quando usar", "quando_usar", valor=kit.quando_usar or "",
+                         linhas=2,
+                         ajuda="Em que situação este kit deve ser acionado."),
+                Div(
+                    Button("Salvar", cls="btn verde", type="submit"),
+                    A("Cancelar", href=f"/kit-ambiental/{kit.id}", cls="btn secundario"),
+                    Form(
+                        Input(type="hidden", name="ativo", value="0"),
+                        Button("Arquivar kit", cls="btn vermelho", type="submit"),
+                        method="post",
+                        action=f"/kit-ambiental/{kit.id}/situacao",
+                        style="margin-left:auto",
+                    ),
+                    cls="barra-acoes",
+                ),
+                method="post",
+                action=f"/kit-ambiental/{kit.id}/editar",
+            ),
+            cls="card",
+        )
+        if (pode and editar)
+        else None
+    )
+
+    form_item = (
+        Div(
+            Div(H2("Adicionar item ao kit"), cls="card-titulo"),
+            Form(
+                Div(
+                    ui.campo("Item", "nome", obrigatório=True,
+                             placeholder="Ex.: Manta absorvente oleofílica"),
+                    ui.campo("Quantidade", "quantidade", placeholder="Ex.: 2"),
+                    ui.campo("Unidade", "unidade", opcoes=UNIDADES_ITEM),
+                    cls="linha-form",
+                ),
+                ui.campo("Para que serve", "utilidade", linhas=2,
+                         ajuda="Uma linha explicando a utilidade do item no kit."),
+                Div(
+                    ui.campo("Produto químico vinculado", "produto_id",
+                             opcoes=opcoes_produto,
+                             ajuda="Opcional. Se o item for um produto cadastrado, "
+                                   "o kit passa a mostrar o link para a FDS dele."),
+                    Label(
+                        Span("Foto do item", cls="rot"),
+                        Input(type="file", name="foto", accept="image/*"),
+                        Span(f"JPG ou PNG, até {config.MAX_UPLOAD_MB} MB.", cls="ajuda"),
+                        cls="campo",
+                    ),
+                    cls="linha-form",
+                ),
+                Div(Button("Adicionar item", cls="btn verde", type="submit"),
+                    cls="barra-acoes"),
+                method="post",
+                action=f"/kit-ambiental/{kit.id}/itens",
+                enctype="multipart/form-data",
+            ),
+            cls="card",
+        )
+        if pode
+        else None
+    )
+
+    form_ponto = (
+        Div(
+            Div(H2("Adicionar ponto de coleta"), cls="card-titulo"),
+            Form(
+                Div(
+                    ui.campo("Fábrica", "fabrica", opcoes=FABRICAS, obrigatório=True),
+                    ui.campo("Onde fica", "local", obrigatório=True,
+                             placeholder="Ex.: Corredor da expedição, ao lado do extintor"),
+                    cls="linha-form",
+                ),
+                Div(
+                    ui.campo("Responsável", "responsavel",
+                             placeholder="Quem procurar naquele ponto"),
+                    ui.campo("Ramal", "ramal", placeholder="Ex.: 4721"),
+                    cls="linha-form",
+                ),
+                ui.campo("Observações", "observacoes", linhas=2),
+                Div(Button("Adicionar ponto", cls="btn", type="submit"),
+                    cls="barra-acoes"),
+                method="post",
+                action=f"/kit-ambiental/{kit.id}/pontos",
+            ),
+            cls="card",
+        )
+        if pode
+        else None
+    )
+
+    lista_pontos = Div(
+        Div(
+            H2("Onde encontrar este kit"),
+            Span(f"{len(kit.pontos_ativos)} ponto(s)", cls="direita"),
+            cls="card-titulo",
+        ),
+        _tabela_pontos(agrupado, mostrar_kit=False, pode=pode)
+        if agrupado
+        else ui.vazio("Nenhum ponto cadastrado para este kit.", "⌖"),
+        cls="card",
+    )
+
+    return ui.pagina(
+        f"{kit.codigo} - {kit.nome}",
+        ui.alerta(ok, "sucesso") if ok else None,
+        ui.alerta(erro, "erro") if erro else None,
+        ui.alerta("Este kit está arquivado e não aparece na consulta.", "aviso")
+        if not kit.ativo
+        else None,
+        ficha,
+        form_editar,
+        Div(
+            Div(
+                H2("O que tem no kit"),
+                Span(f"{len(kit.itens_ativos)} item(ns)", cls="direita"),
+                cls="card-titulo",
+            ),
+            _grade_itens(kit, pode),
+            cls="card",
+        ),
+        form_item,
+        lista_pontos,
+        form_ponto,
+        usuario=usuario,
+        subtitulo="Composição válida para todas as fábricas",
+        acoes=[A("‹ Kits ambientais", href="/kit-ambiental", cls="btn secundario")],
+    )
+
+
+@rt("/kit-ambiental/itens/{iid:int}/foto")
+def get(iid: int):
+    """Foto do item (aberta, como o resto da consulta)."""
+    with db_session() as s:
+        item = s.get(ItemKit, iid)
+        if not item or not item.foto:
+            return Response("Sem foto", status_code=404)
+        dados, tipo = item.foto, item.foto_tipo
+    return Response(dados, media_type=tipo or "image/jpeg")
+
+
+# ------------------------------------------------------------ Manutenção
+@rt("/kit-ambiental/novo")
+def get(req, erro: str = ""):
+    barrado = exigir_papel(req, *servicos.PAPEIS_KIT)
+    if barrado:
+        return barrado
+    return ui.pagina(
+        "Novo tipo de kit",
+        ui.alerta(erro, "erro") if erro else None,
+        Div(
+            Div(H2("Dados do kit"), cls="card-titulo"),
+            Form(
+                Div(
+                    ui.campo("Código", "codigo", obrigatório=True, placeholder="Ex.: KIT A"),
+                    ui.campo("Nome", "nome", obrigatório=True,
+                             placeholder="Ex.: Kit de contenção para óleos"),
+                    cls="linha-form",
+                ),
+                ui.campo("Para que serve", "utilidade", linhas=2),
+                ui.campo("Quando usar", "quando_usar", linhas=2),
+                Div(
+                    Button("Criar kit", cls="btn verde", type="submit"),
+                    A("Cancelar", href="/kit-ambiental", cls="btn secundario"),
+                    cls="barra-acoes",
+                ),
+                method="post",
+                action="/kit-ambiental/novo",
+            ),
+            cls="card",
+        ),
+        usuario=eu(req),
+        subtitulo="Os itens e os pontos de coleta são cadastrados depois",
+        acoes=[A("‹ Kits ambientais", href="/kit-ambiental", cls="btn secundario")],
+    )
+
+
+@rt("/kit-ambiental/novo")
+async def post(req):
+    barrado = exigir_papel(req, *servicos.PAPEIS_KIT)
+    if barrado:
+        return barrado
+    form = await req.form()
+    dados = {k: (v.strip() if isinstance(v, str) else v) for k, v in form.items()}
+    if not dados.get("nome") or not dados.get("codigo"):
+        return RedirectResponse(
+            _msg("/kit-ambiental/novo", "erro", "Informe o código e o nome do kit."),
+            status_code=303,
+        )
+    with db_session() as s:
+        kit = servicos.criar_kit(s, dados, s.get(Usuario, eu(req).id))
+        kid = kit.id
+    return RedirectResponse(
+        _msg(f"/kit-ambiental/{kid}", "ok", "Kit criado. Agora cadastre os itens."),
+        status_code=303,
+    )
+
+
+@rt("/kit-ambiental/{kid:int}/editar")
+async def post(req, kid: int):
+    barrado = exigir_papel(req, *servicos.PAPEIS_KIT)
+    if barrado:
+        return barrado
+    form = await req.form()
+    dados = {k: (v.strip() if isinstance(v, str) else v) for k, v in form.items()}
+    with db_session() as s:
+        kit = servicos.obter_kit(s, kid)
+        if not kit:
+            return RedirectResponse(
+                _msg("/kit-ambiental", "erro", "Kit não encontrado."), status_code=303
+            )
+        servicos.atualizar_kit(s, kit, dados, s.get(Usuario, eu(req).id))
+    return RedirectResponse(
+        _msg(f"/kit-ambiental/{kid}", "ok", "Dados do kit atualizados."), status_code=303
+    )
+
+
+@rt("/kit-ambiental/{kid:int}/situacao")
+async def post(req, kid: int):
+    barrado = exigir_papel(req, *servicos.PAPEIS_KIT)
+    if barrado:
+        return barrado
+    form = await req.form()
+    ativo = (form.get("ativo") or "0") == "1"
+    with db_session() as s:
+        kit = servicos.obter_kit(s, kid)
+        if kit:
+            servicos.arquivar_kit(s, kit, s.get(Usuario, eu(req).id), ativo)
+    return RedirectResponse(
+        _msg(f"/kit-ambiental/{kid}", "ok",
+             "Kit restaurado." if ativo else "Kit arquivado."),
+        status_code=303,
+    )
+
+
+@rt("/kit-ambiental/{kid:int}/itens")
+async def post(req, kid: int):
+    barrado = exigir_papel(req, *servicos.PAPEIS_KIT)
+    if barrado:
+        return barrado
+    form = await req.form()
+    dados = {k: (v.strip() if isinstance(v, str) else v) for k, v in form.items()}
+    if not dados.get("nome"):
+        return RedirectResponse(
+            _msg(f"/kit-ambiental/{kid}", "erro", "Informe o nome do item."),
+            status_code=303,
+        )
+    produto_id = dados.get("produto_id")
+    dados["produto_id"] = int(produto_id) if str(produto_id).isdigit() else None
+    foto, erro = await _foto_do_form(form)
+    if erro:
+        return RedirectResponse(_msg(f"/kit-ambiental/{kid}", "erro", erro), status_code=303)
+    with db_session() as s:
+        kit = servicos.obter_kit(s, kid)
+        if not kit:
+            return RedirectResponse(
+                _msg("/kit-ambiental", "erro", "Kit não encontrado."), status_code=303
+            )
+        servicos.adicionar_item(s, kit, dados, foto, s.get(Usuario, eu(req).id))
+    return RedirectResponse(
+        _msg(f"/kit-ambiental/{kid}", "ok", "Item adicionado ao kit."), status_code=303
+    )
+
+
+@rt("/kit-ambiental/itens/{iid:int}/editar")
+def get(req, iid: int, erro: str = ""):
+    barrado = exigir_papel(req, *servicos.PAPEIS_KIT)
+    if barrado:
+        return barrado
+    with db_session() as s:
+        item = s.get(ItemKit, iid)
+        if not item:
+            return RedirectResponse(
+                _msg("/kit-ambiental", "erro", "Item não encontrado."), status_code=303
+            )
+        kid = item.kit_id
+        codigo = item.kit.codigo
+        produtos = servicos.buscar_produtos(s, somente_aprovados=True, limite=None)
+        opcoes_produto = [
+            (str(p.id), f"{p.codigo_interno} - {p.nome_comercial}") for p in produtos
+        ]
+    return ui.pagina(
+        f"Editar item - {item.nome}",
+        ui.alerta(erro, "erro") if erro else None,
+        Div(
+            Div(H2(f"Item do {codigo}"), cls="card-titulo"),
+            Form(
+                Div(
+                    ui.campo("Item", "nome", valor=item.nome, obrigatório=True),
+                    ui.campo("Quantidade", "quantidade", valor=item.quantidade or ""),
+                    ui.campo("Unidade", "unidade", valor=item.unidade or "",
+                             opcoes=UNIDADES_ITEM),
+                    cls="linha-form",
+                ),
+                ui.campo("Para que serve", "utilidade", valor=item.utilidade or "",
+                         linhas=2),
+                Div(
+                    ui.campo("Produto químico vinculado", "produto_id",
+                             valor=str(item.produto_id or ""), opcoes=opcoes_produto),
+                    Label(
+                        Span("Trocar a foto", cls="rot"),
+                        Input(type="file", name="foto", accept="image/*"),
+                        Span("Deixe em branco para manter a foto atual.", cls="ajuda"),
+                        cls="campo",
+                    ),
+                    cls="linha-form",
+                ),
+                Label(
+                    Input(type="checkbox", name="remover_foto", value="1",
+                          style="width:auto;margin-right:.4rem"),
+                    "Remover a foto atual",
+                    cls="pequeno",
+                    style="display:block;margin-bottom:1rem",
+                ) if item.tem_foto else None,
+                Div(
+                    Button("Salvar", cls="btn verde", type="submit"),
+                    A("Cancelar", href=f"/kit-ambiental/{kid}", cls="btn secundario"),
+                    cls="barra-acoes",
+                ),
+                method="post",
+                action=f"/kit-ambiental/itens/{iid}/editar",
+                enctype="multipart/form-data",
+            ),
+            cls="card",
+        ),
+        usuario=eu(req),
+        acoes=[A("‹ Voltar ao kit", href=f"/kit-ambiental/{kid}", cls="btn secundario")],
+    )
+
+
+@rt("/kit-ambiental/itens/{iid:int}/editar")
+async def post(req, iid: int):
+    barrado = exigir_papel(req, *servicos.PAPEIS_KIT)
+    if barrado:
+        return barrado
+    form = await req.form()
+    dados = {k: (v.strip() if isinstance(v, str) else v) for k, v in form.items()}
+    produto_id = dados.get("produto_id")
+    dados["produto_id"] = int(produto_id) if str(produto_id).isdigit() else None
+    dados["remover_foto"] = form.get("remover_foto") == "1"
+    foto, erro = await _foto_do_form(form)
+    if erro:
+        return RedirectResponse(
+            _msg(f"/kit-ambiental/itens/{iid}/editar", "erro", erro), status_code=303
+        )
+    with db_session() as s:
+        item = s.get(ItemKit, iid)
+        if not item:
+            return RedirectResponse(
+                _msg("/kit-ambiental", "erro", "Item não encontrado."), status_code=303
+            )
+        kid = item.kit_id
+        servicos.atualizar_item(s, item, dados, foto, s.get(Usuario, eu(req).id))
+    return RedirectResponse(
+        _msg(f"/kit-ambiental/{kid}", "ok", "Item atualizado."), status_code=303
+    )
+
+
+@rt("/kit-ambiental/itens/{iid:int}/remover")
+async def post(req, iid: int):
+    barrado = exigir_papel(req, *servicos.PAPEIS_KIT)
+    if barrado:
+        return barrado
+    with db_session() as s:
+        item = s.get(ItemKit, iid)
+        if not item:
+            return RedirectResponse("/kit-ambiental", status_code=303)
+        kid = item.kit_id
+        servicos.remover_item(s, item, s.get(Usuario, eu(req).id))
+    return RedirectResponse(
+        _msg(f"/kit-ambiental/{kid}", "ok", "Item removido."), status_code=303
+    )
+
+
+@rt("/kit-ambiental/{kid:int}/pontos")
+async def post(req, kid: int):
+    barrado = exigir_papel(req, *servicos.PAPEIS_KIT)
+    if barrado:
+        return barrado
+    form = await req.form()
+    dados = {k: (v.strip() if isinstance(v, str) else v) for k, v in form.items()}
+    if dados.get("fabrica") not in FABRICAS or not dados.get("local"):
+        return RedirectResponse(
+            _msg(f"/kit-ambiental/{kid}", "erro",
+                 "Informe a fábrica e onde o kit fica."),
+            status_code=303,
+        )
+    with db_session() as s:
+        kit = servicos.obter_kit(s, kid)
+        if not kit:
+            return RedirectResponse(
+                _msg("/kit-ambiental", "erro", "Kit não encontrado."), status_code=303
+            )
+        servicos.adicionar_ponto(s, kit, dados, s.get(Usuario, eu(req).id))
+    return RedirectResponse(
+        _msg(f"/kit-ambiental/{kid}", "ok", "Ponto de coleta adicionado."),
+        status_code=303,
+    )
+
+
+@rt("/kit-ambiental/pontos/{pid:int}/remover")
+async def post(req, pid: int):
+    barrado = exigir_papel(req, *servicos.PAPEIS_KIT)
+    if barrado:
+        return barrado
+    with db_session() as s:
+        ponto = s.get(PontoColetaKit, pid)
+        if not ponto:
+            return RedirectResponse("/kit-ambiental", status_code=303)
+        kid = ponto.kit_id
+        servicos.remover_ponto(s, ponto, s.get(Usuario, eu(req).id))
+    return RedirectResponse(
+        _msg(f"/kit-ambiental/{kid}", "ok", "Ponto removido."), status_code=303
     )
 
 
@@ -2570,9 +3426,12 @@ def _tabela_eventos(eventos):
 
 
 @rt("/produtos/{pid}")
-def get(req, pid: int, ok: str = "", erro: str = ""):
+def get(req, sess, pid: int, ok: str = "", erro: str = ""):
     usuario = eu(req)
     publico = usuario is None
+    # Quem enviou a solicitação sem login acompanha a própria ficha enquanto
+    # durar a sessão do navegador, mesmo antes da aprovação.
+    minha = publico and _e_minha(sess, pid)
     with db_session() as s:
         produto = s.get(Produto, pid)
         if not produto:
@@ -2581,7 +3440,7 @@ def get(req, pid: int, ok: str = "", erro: str = ""):
                 ui.alerta("Registro inexistente.", "erro"),
                 usuario=usuario,
             )
-        if publico and produto.status != "APROVADO":
+        if publico and not minha and produto.status != "APROVADO":
             return ui.pagina(
                 "Produto não disponível para consulta pública",
                 ui.alerta(
@@ -2646,6 +3505,10 @@ def get(req, pid: int, ok: str = "", erro: str = ""):
         ),
         ui.item_ficha("Classificação GHS", produto.classificacao_ghs),
         ui.item_ficha("Número ONU", produto.onu_numero),
+        ui.item_ficha("Inflamável", produto.inflamavel_label),
+        ui.item_ficha("Cancerígeno", produto.cancerigeno_label),
+        ui.item_ficha("Ponto de fulgor", produto.ponto_fulgor),
+        ui.item_ficha("Funcionários expostos", produto.expostos_label),
         ui.item_ficha(
             "Classes de risco",
             Div(*[Span(r, cls="chip risco") for r in produto.riscos_nomes],
@@ -2656,6 +3519,12 @@ def get(req, pid: int, ok: str = "", erro: str = ""):
         ),
         ui.item_ficha("Composição", produto.composicao, largo=True),
         ui.item_ficha("Aplicação / finalidade", produto.aplicacao, largo=True),
+        ui.item_ficha("Necessidade de uso", produto.necessidade_uso, largo=True),
+        ui.item_ficha("Motivo do desenvolvimento", produto.motivo_desenvolvimento,
+                      largo=True),
+        ui.item_ficha("Função dos colaboradores expostos", produto.funcoes_expostas,
+                      largo=True),
+        ui.item_ficha("Solicitante terceiro", produto.solicitante_terceiro, largo=True),
         ui.item_ficha("EPI recomendado", produto.epi_recomendado, largo=True),
         ui.item_ficha("Restrições de uso", produto.restricoes_uso, largo=True),
         ui.item_ficha("Observações", produto.observacoes, largo=True),
@@ -3072,6 +3941,17 @@ def get(req, pid: int, erro: str = ""):
             "prazo_utilizacao": produto.prazo_utilizacao or "",
             "consumo_estimado": produto.consumo_estimado or "",
             "unidade": produto.unidade or "",
+            "necessidade_uso": produto.necessidade_uso or "",
+            "motivo_desenvolvimento": produto.motivo_desenvolvimento or "",
+            "funcionarios_expostos": (
+                "" if produto.funcionarios_expostos is None
+                else str(produto.funcionarios_expostos)
+            ),
+            "funcoes_expostas": produto.funcoes_expostas or "",
+            "solicitante_terceiro": produto.solicitante_terceiro or "",
+            "inflamavel": produto.inflamavel or "",
+            "cancerigeno": produto.cancerigeno or "",
+            "ponto_fulgor": produto.ponto_fulgor or "",
         }
         riscos_marcados = set(produto.riscos_nomes)
         codigo, nome = produto.codigo_interno, produto.nome_comercial
@@ -3105,16 +3985,35 @@ def get(req, pid: int, erro: str = ""):
                 cls="linha-form",
             ),
             ui.campo("Aplicação / finalidade", "aplicacao", valor=dados["aplicacao"], linhas=3),
+            ui.campo("Necessidade de uso", "necessidade_uso",
+                     valor=dados["necessidade_uso"], linhas=3,
+                     ajuda="Por que o produto é necessário e o que ele resolve."),
+            ui.campo("Motivo do desenvolvimento", "motivo_desenvolvimento",
+                     valor=dados["motivo_desenvolvimento"], linhas=3,
+                     ajuda="O que originou a solicitação (projeto, melhoria, exigência)."),
             Div(
                 ui.campo("Área solicitante", "area_solicitante",
                          valor=dados["area_solicitante"], opcoes=AREAS_SOLICITANTES),
                 ui.campo("Prazo de utilização", "prazo_utilizacao",
-                         valor=dados["prazo_utilizacao"]),
+                         valor=dados["prazo_utilizacao"], opcoes=PRAZOS_UTILIZACAO),
                 ui.campo("Quantidade prevista", "consumo_estimado",
                          valor=dados["consumo_estimado"]),
-                ui.campo("Unidade de medida", "unidade", valor=dados["unidade"]),
+                ui.campo("Unidade de medida", "unidade", valor=dados["unidade"],
+                         opcoes=UNIDADES_CONSUMO),
                 cls="linha-form",
             ),
+            Div(
+                ui.campo("Funcionários expostos", "funcionarios_expostos", tipo="number",
+                         valor=dados["funcionarios_expostos"],
+                         ajuda="Quantidade de pessoas com contato direto."),
+                ui.campo("Função dos colaboradores expostos", "funcoes_expostas",
+                         valor=dados["funcoes_expostas"],
+                         placeholder="Ex.: operador de laminação, analista de laboratório"),
+                cls="linha-form",
+            ),
+            ui.campo("Solicitante terceiro", "solicitante_terceiro",
+                     valor=dados["solicitante_terceiro"],
+                     ajuda="Preencha apenas quando a solicitação vier de empresa terceira."),
             Div(
                 Span("Unidades autorizadas", cls="rot"),
                 Div(
@@ -3139,6 +4038,15 @@ def get(req, pid: int, erro: str = ""):
                 ui.campo("Classificação GHS", "classificacao_ghs",
                          valor=dados["classificacao_ghs"]),
                 ui.campo("Número ONU", "onu_numero", valor=dados["onu_numero"]),
+                cls="linha-form",
+            ),
+            Div(
+                ui.campo("Inflamável", "inflamavel", valor=dados["inflamavel"],
+                         opcoes=[(k, v) for k, v in SIM_NAO.items()]),
+                ui.campo("Cancerígeno", "cancerigeno", valor=dados["cancerigeno"],
+                         opcoes=[(k, v) for k, v in SIM_NAO.items()]),
+                ui.campo("Ponto de fulgor", "ponto_fulgor", valor=dados["ponto_fulgor"],
+                         placeholder="Ex.: 42 °C", ajuda="Seção 9 da FDS."),
                 cls="linha-form",
             ),
             Div(
@@ -3233,6 +4141,25 @@ async def post(req, pid: int):
     dados["fabricas"] = [f for f in form.getlist("fabricas") if f in FABRICAS]
     dados["controles"] = _ler_controles(form)
     dados["riscos"] = [r for r in form.getlist("riscos") if r in CLASSES_RISCO]
+
+    expostos = (dados.get("funcionarios_expostos") or "").strip()
+    if expostos:
+        if not expostos.isdigit():
+            return RedirectResponse(
+                _msg(f"/produtos/{pid}/editar", "erro",
+                     "Funcionários expostos deve ser um número (ex.: 4)."),
+                status_code=303,
+            )
+        dados["funcionarios_expostos"] = int(expostos)
+    else:
+        dados["funcionarios_expostos"] = None
+
+    if dados.get("inflamavel") == "SIM" and not (dados.get("ponto_fulgor") or "").strip():
+        return RedirectResponse(
+            _msg(f"/produtos/{pid}/editar", "erro",
+                 "Produto inflamável: informe o ponto de fulgor (seção 9 da FDS)."),
+            status_code=303,
+        )
 
     with db_session() as s:
         produto = s.get(Produto, pid)
@@ -3783,7 +4710,9 @@ async def post(req):
             )
         )
         servicos.registrar_log(s, "USUARIO_CRIADO", f"{nome} <{email}> como {papel}", eu(req).id)
-    return RedirectResponse("/usuarios?ok=Usuario+cadastrado.", status_code=303)
+    return RedirectResponse(
+        _msg("/usuarios", "ok", "Usuário cadastrado."), status_code=303
+    )
 
 
 @rt("/notificacoes")

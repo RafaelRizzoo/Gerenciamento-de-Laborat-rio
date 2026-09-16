@@ -317,8 +317,16 @@ def campo(
         rotulo, Span(" *", cls="obr") if obrigatório else None, cls="rot"
     )
     if opcoes is not None:
+        chaves = [o if isinstance(o, str) else o[0] for o in opcoes]
+        # Valor antigo fora da lista continua visível (e não se perde ao salvar).
+        legado = (
+            [Option(f"{valor} (valor atual)", value=valor, selected=True)]
+            if valor and valor not in chaves
+            else []
+        )
         entrada = Select(
             Option("Selecione...", value="", selected=not valor),
+            *legado,
             *[
                 Option(
                     texto if isinstance(texto, str) else texto[1],
