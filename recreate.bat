@@ -95,8 +95,8 @@ echo.
 echo ============================================================
 echo   Pronto! Abrindo http://localhost:5001
 echo.
-echo   Login de administrador:  rafael.rizzo@tenaris.com
-echo   Senha:                   tenaris123
+echo   Login de administrador:  jusilva@tenaris.com
+echo   Senha:                   123456
 echo   ^(consulta, FDS e cadastro funcionam sem login^)
 echo.
 echo   O banco NAO foi apagado - fica guardado fora do conteiner.
@@ -199,7 +199,7 @@ exit /b 1
 :erro_subir
 echo.
 echo [ERRO] Falhou ao construir ou subir o conteiner.
-echo        Copie a mensagem acima e mande para o Rafael.
+echo        Copie a mensagem acima e mande para a Julia.
 echo.
 pause
 exit /b 1

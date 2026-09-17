@@ -22,7 +22,8 @@ Uns 8 minutos, com o sistema aberto em <http://localhost:5001>.
 3. Deixe as três FDS à mão, na pasta **`exemplos`** do projeto. A do
    **Qualypav** é a melhor para demonstrar ao vivo: é a que a leitura
    automática preenche melhor (14 campos).
-4. Senha de todos os usuários de teste: **`tenaris123`**.
+4. Logins: a **Julia Silva** (`jusilva@tenaris.com`) entra com **`123456`**;
+   os aprovadores usam **`tenaris123`**.
 
 > Deixe a janela preta aberta durante toda a apresentação. Ela é o sistema.
 
@@ -125,7 +126,7 @@ Final fecha; qualquer reprovação encerra.
 
 ## 4. Os avisos por e-mail (1 min)
 
-Menu **Notificações** (entrando como `rafael.rizzo@tenaris.com`).
+Menu **Notificações** (entrando como `jusilva@tenaris.com`).
 
 Mostre que o sistema já gerou tudo o que seria enviado: os quatro avisos às
 áreas, a confirmação ao solicitante, um a cada parecer, a chamada do

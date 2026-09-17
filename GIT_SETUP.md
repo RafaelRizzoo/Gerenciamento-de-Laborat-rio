@@ -27,7 +27,7 @@ linha de comando, para consulta.
 ### 0.2 Crie o repositório a partir da pasta do projeto
 
 1. **File → Add local repository**
-2. Escolha a pasta `C:\Users\Rafael\Desktop\Gerenciamento de Laboratório`
+2. Escolha a pasta `C:\Users\<seu-usuario>\Desktop\Gerenciamento de Laboratório`
 3. Vai aparecer o aviso *"this directory does not appear to be a Git
    repository"* — clique em **create a repository**
 4. Preencha:

@@ -42,17 +42,17 @@ py -3 -m venv .venv
 
 </details>
 
-### Usuários de teste (senha `tenaris123`)
+### Usuários de teste
 
-| E-mail | Papel no fluxo |
-|---|---|
-| ana.silva@tenaris.com | Solicitante |
-| bruno.costa@tenaris.com | Meio Ambiente |
-| carla.mendes@tenaris.com | Saúde |
-| fabio.nunes@tenaris.com | Segurança |
-| diego.ramos@tenaris.com | Químico Responsável |
-| eduardo.lima@tenaris.com | Aprovador Final |
-| rafael.rizzo@tenaris.com | Administrador (vê tudo) |
+| E-mail | Senha | Papel no fluxo |
+|---|---|---|
+| ana.silva@tenaris.com | `tenaris123` | Solicitante |
+| bruno.costa@tenaris.com | `tenaris123` | Meio Ambiente |
+| carla.mendes@tenaris.com | `tenaris123` | Saúde |
+| fabio.nunes@tenaris.com | `tenaris123` | Segurança |
+| diego.ramos@tenaris.com | `tenaris123` | Químico Responsável |
+| eduardo.lima@tenaris.com | `tenaris123` | Aprovador Final |
+| jusilva@tenaris.com | `123456` | Administradora (vê tudo) |
 
 As quatro áreas (Meio Ambiente, Saúde, Segurança e Químico Responsável)
 avaliam **em paralelo, sem ordem entre elas**. O Aprovador Final só entra

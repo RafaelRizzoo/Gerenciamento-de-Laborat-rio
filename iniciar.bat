@@ -329,7 +329,7 @@ echo.
 echo [ERRO] Nao consegui instalar as bibliotecas.
 echo        Quase sempre e' falta de internet ou bloqueio do proxy da empresa.
 echo        Tente de novo conectada a internet; se persistir, mande esta tela
-echo        para o Rafael.
+echo        para a Julia.
 echo.
 pause
 exit /b 1
@@ -337,7 +337,7 @@ exit /b 1
 :erro_banco
 echo.
 echo [ERRO] Falha ao preparar o banco de dados ^(mensagem acima^).
-echo        Mande esta tela para o Rafael.
+echo        Mande esta tela para a Julia.
 echo.
 pause
 exit /b 1

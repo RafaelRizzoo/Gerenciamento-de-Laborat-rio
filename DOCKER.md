@@ -43,7 +43,7 @@ instala as bibliotecas. Depois disso, sobe em segundos.
 
 Pronto: abra <http://localhost:5001>.
 
-Login de teste: `rafael.rizzo@tenaris.com` / `tenaris123`
+Login de teste: `jusilva@tenaris.com` / `123456`
 (a lista completa aparece no terminal com `docker compose logs app`).
 
 ---

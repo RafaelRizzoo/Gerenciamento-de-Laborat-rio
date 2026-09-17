@@ -84,7 +84,7 @@ EXEMPLOS = [
         "_arquivo": "FDS_Qualypav_Demarcacao.pdf",
         "_decisoes": "parcial",
         "_dias": 9,
-        "_solicitante": ("Rafael Rizzo", "rafael.rizzo@tenaris.com"),
+        "_solicitante": ("Julia Silva", "jusilva@tenaris.com"),
         "nome_comercial": "Qualypav Demarcação Branco e Cores",
         "fabricante": "Qualycril Soluções para a Construção Civil Ltda",
         "fornecedor": "Distribuidora Vale Tintas",

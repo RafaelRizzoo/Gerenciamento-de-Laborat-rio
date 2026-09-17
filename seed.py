@@ -30,14 +30,15 @@ from security import gerar_hash
 
 SENHA_PADRAO = "tenaris123"
 
+# (nome, e-mail, papel, setor, senha)
 USUARIOS = [
-    ("Ana Silva", "ana.silva@tenaris.com", "SOLICITANTE", "Laboratório"),
-    ("Bruno Costa", "bruno.costa@tenaris.com", "MEIO_AMBIENTE", "Meio Ambiente"),
-    ("Carla Mendes", "carla.mendes@tenaris.com", "SAUDE", "Saúde Ocupacional"),
-    ("Fábio Nunes", "fabio.nunes@tenaris.com", "SEGURANCA", "Segurança do Trabalho"),
-    ("Diego Ramos", "diego.ramos@tenaris.com", "QUIMICO_RESPONSAVEL", "Laboratório"),
-    ("Eduardo Lima", "eduardo.lima@tenaris.com", "APROVADOR_FINAL", "Operações"),
-    ("Rafael Rizzo", "rafael.rizzo@tenaris.com", "ADMIN", "TI / Laboratório"),
+    ("Ana Silva", "ana.silva@tenaris.com", "SOLICITANTE", "Laboratório", SENHA_PADRAO),
+    ("Bruno Costa", "bruno.costa@tenaris.com", "MEIO_AMBIENTE", "Meio Ambiente", SENHA_PADRAO),
+    ("Carla Mendes", "carla.mendes@tenaris.com", "SAUDE", "Saúde Ocupacional", SENHA_PADRAO),
+    ("Fábio Nunes", "fabio.nunes@tenaris.com", "SEGURANCA", "Segurança do Trabalho", SENHA_PADRAO),
+    ("Diego Ramos", "diego.ramos@tenaris.com", "QUIMICO_RESPONSAVEL", "Laboratório", SENHA_PADRAO),
+    ("Eduardo Lima", "eduardo.lima@tenaris.com", "APROVADOR_FINAL", "Operações", SENHA_PADRAO),
+    ("Julia Silva", "jusilva@tenaris.com", "ADMIN", "TI / Laboratório", "123456"),
 ]
 
 PRODUTOS = [
@@ -961,7 +962,7 @@ def executar(recriar: bool = True):
             s.flush()
 
         usuarios = {}
-        for nome, email, papel, setor in USUARIOS:
+        for nome, email, papel, setor, senha in USUARIOS:
             existente = s.scalar(select(Usuario).where(Usuario.email == email))
             if existente:
                 usuarios[papel] = existente
@@ -969,7 +970,7 @@ def executar(recriar: bool = True):
             u = Usuario(
                 nome=nome,
                 email=email,
-                senha_hash=gerar_hash(SENHA_PADRAO),
+                senha_hash=gerar_hash(senha),
                 papel=papel,
                 setor=setor,
             )
@@ -1080,9 +1081,9 @@ def executar(recriar: bool = True):
         popular_kits(s, usuarios)
 
         print("Base populada com sucesso.")
-        print(f"Usuarios criados ({len(USUARIOS)}) - senha padrão: {SENHA_PADRAO}")
-        for nome, email, papel, _ in USUARIOS:
-            print(f"  {email:34s} {papel}")
+        print(f"Usuários criados ({len(USUARIOS)}):")
+        for nome, email, papel, _setor, senha in USUARIOS:
+            print(f"  {email:30s} {papel:22s} senha: {senha}")
 
 
 if __name__ == "__main__":

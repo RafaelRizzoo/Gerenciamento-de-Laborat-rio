@@ -98,18 +98,17 @@ libera a porta — responda que sim para redes privadas.
 biblioteca de documentos, kit ambiental e até o cadastro de um produto novo
 funcionam sem entrar com usuário.
 
-**Para aprovar solicitações** é preciso entrar. Usuários de teste (senha
-`tenaris123` para todos):
+**Para aprovar solicitações** é preciso entrar. Usuários de teste:
 
-| E-mail | Papel |
-|---|---|
-| rafael.rizzo@tenaris.com | Administrador (vê tudo) |
-| ana.silva@tenaris.com | Solicitante |
-| bruno.costa@tenaris.com | Meio Ambiente |
-| carla.mendes@tenaris.com | Saúde |
-| fabio.nunes@tenaris.com | Segurança |
-| diego.ramos@tenaris.com | Químico Responsável |
-| eduardo.lima@tenaris.com | Aprovador Final |
+| E-mail | Senha | Papel |
+|---|---|---|
+| jusilva@tenaris.com | `123456` | Administradora (vê tudo) |
+| ana.silva@tenaris.com | `tenaris123` | Solicitante |
+| bruno.costa@tenaris.com | `tenaris123` | Meio Ambiente |
+| carla.mendes@tenaris.com | `tenaris123` | Saúde |
+| fabio.nunes@tenaris.com | `tenaris123` | Segurança |
+| diego.ramos@tenaris.com | `tenaris123` | Químico Responsável |
+| eduardo.lima@tenaris.com | `tenaris123` | Aprovador Final |
 
 ---
 
@@ -124,7 +123,7 @@ Sem Docker: no arquivo `gestao_quimicos.db`, dentro da pasta do projeto.
 Com Docker: num volume do Docker, fora do contêiner. Nos dois casos,
 atualizar o sistema não apaga nada.
 
-**O que eu cadastrar aparece para o Rafael?**
+**O que eu cadastrar aparece para a Julia?**
 Não. Cada instalação tem o seu próprio banco, separado. Para todos verem os
 mesmos dados, o sistema precisaria ficar num servidor único — é um passo
 seguinte, se fizer sentido.
@@ -144,7 +143,7 @@ antiga.
 
 **Deu erro, e agora?**
 A própria janela preta mostra a mensagem. Tire um print dela e mande para o
-Rafael.
+Julia.
 
 **Posso ter os dois jeitos no mesmo computador?**
 Pode, mas não ao mesmo tempo: os dois usam a porta 5001, e cada um tem o seu
