@@ -261,3 +261,40 @@ def notificar_conclusao(sessao, produto: Produto):
         f"-- {config.APP_EMPRESA} | {config.APP_NOME}"
     )
     notificar(sessao, produto.solicitante.email, assunto, corpo, produto.id)
+
+
+def notificar_novo_aprovador(sessao, usuario: Usuario, area: str,
+                             senha_provisoria: str | None = None):
+    """Avisa a pessoa que ela passou a responder por uma área de aprovação.
+
+    Quando o cadastro é novo, o texto traz a orientação de definir a própria
+    senha. Enquanto o SMTP da Tenaris não estiver configurado, a mensagem fica
+    registrada em /notificacoes e a senha provisória é mostrada na tela de quem
+    fez o cadastro - ela nunca viaja por e-mail.
+    """
+    rotulo = dict(FLUXO_APROVACAO).get(area, area)
+    assunto = f"[Produtos Químicos] Você é aprovador(a) de {rotulo}"
+    if senha_provisoria:
+        meio = (
+            "Seu acesso foi criado. Entre com o e-mail deste aviso e a senha "
+            "provisória que a pessoa responsável pelo cadastro vai lhe passar. "
+            "No primeiro acesso o sistema pede para você definir uma senha sua."
+        )
+    else:
+        meio = (
+            "Você já tinha acesso ao sistema: use a mesma senha de sempre. "
+            "A novidade é que agora as solicitações desta área também aparecem "
+            "para você em Aprovações."
+        )
+    corpo = (
+        f"Olá {usuario.nome},\n\n"
+        f"Você passou a responder pela área de {rotulo} no sistema de Gestão de "
+        f"Produtos Químicos.\n\n"
+        f"{meio}\n\n"
+        f"A partir de agora você recebe um aviso a cada solicitação que depende "
+        f"do seu parecer, e uma cobrança a cada 7 dias enquanto ela estiver "
+        f"parada.\n\n"
+        f"Acesse em: /aprovacoes\n\n"
+        f"-- {config.APP_EMPRESA} | {config.APP_NOME}"
+    )
+    return notificar(sessao, usuario.email, assunto, corpo)

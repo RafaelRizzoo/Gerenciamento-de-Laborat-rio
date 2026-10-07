@@ -29,14 +29,16 @@ def css_url() -> str:
 
 
 # ---------------------------------------------------------------- Marca
+# O símbolo quadrado (as barras) serve de favicon; a assinatura completa
+# - barras + palavra "Tenaris" - é a imagem oficial da marca.
 LOGO = "/static/img/logo.png"
+MARCA = "/static/img/tenaris.png"
 
 
 def marca_tenaris(tamanho: str = "normal"):
-    """Símbolo oficial (static/img/logo.png) + wordmark."""
+    """Assinatura oficial da Tenaris (static/img/tenaris.png)."""
     return Span(
-        Img(src=LOGO, alt="Tenaris", cls="sinal"),
-        Span("Tenaris", cls="wordmark"),
+        Img(src=MARCA, alt="Tenaris", cls="marca-img"),
         cls=f"marca-tenaris {tamanho}",
     )
 

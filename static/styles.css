@@ -429,7 +429,13 @@ fieldset.secao > legend {
   text-transform: none; letter-spacing: 0;
 }
 
-.marca-tenaris { display: inline-flex; align-items: center; gap: .6rem; }
+.marca-tenaris { display: inline-flex; align-items: center; }
+.marca-tenaris .marca-img {
+  display: block; flex: 0 0 auto;
+  height: 34px; width: auto; object-fit: contain;
+}
+.marca-tenaris.pequeno .marca-img { height: 24px; }
+/* compatibilidade com a marca antiga (símbolo + texto) */
 .marca-tenaris .sinal {
   display: block; flex: 0 0 auto;
   height: 40px; width: auto; object-fit: contain;
@@ -576,7 +582,7 @@ fieldset.secao > legend {
 .resumo-publico {
   display: flex; align-items: center; justify-content: center; gap: .7rem;
   flex-wrap: wrap;
-  margin-top: 1.8rem; font-size: .86rem; color: var(--cinza-medio);
+  margin: 1.8rem 0 .9rem; font-size: .86rem; color: var(--cinza-medio);
 }
 .resumo-publico b { color: var(--cinza-escuro); }
 .resumo-publico .ponto { color: var(--cinza-claro); }
@@ -1020,3 +1026,63 @@ button.tirar:hover { text-decoration: underline; }
 .lista-passos li { margin-bottom: .7rem; line-height: 1.5; font-size: .93rem; }
 .lista-passos li:last-child { margin-bottom: 0; }
 .lista-passos li b { color: var(--azul); }
+
+/* =====================================================================
+   Gaveta lateral (meia pagina) - cadastro sem sair da tela
+   Abre pelo endereco #id, sem JavaScript: o seletor :target cuida disso.
+   ===================================================================== */
+.gaveta {
+  position: fixed; inset: 0; z-index: 90;
+  visibility: hidden; opacity: 0;
+  transition: opacity .18s ease, visibility .18s ease;
+}
+.gaveta:target { visibility: visible; opacity: 1; }
+
+.gaveta-fundo {
+  position: absolute; inset: 0;
+  background: rgba(20, 28, 38, .42);
+  display: block;
+}
+
+.gaveta-painel {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: min(460px, 94vw);
+  background: var(--branco);
+  box-shadow: -6px 0 28px rgba(0, 0, 0, .18);
+  padding: 1.4rem 1.5rem 2rem;
+  overflow-y: auto;
+  transform: translateX(100%);
+  transition: transform .22s ease;
+}
+.gaveta:target .gaveta-painel { transform: translateX(0); }
+
+.gaveta-topo {
+  display: flex; align-items: flex-start; gap: 1rem;
+  border-bottom: 1px solid var(--cinza-fundo);
+  padding-bottom: .8rem; margin-bottom: 1rem;
+}
+.gaveta-topo h2 { margin: 0; font-size: 1.18rem; line-height: 1.3; }
+.gaveta-topo .gaveta-sub {
+  font-size: .82rem; font-weight: 600; color: var(--verde);
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.gaveta-fechar {
+  margin-left: auto; flex: 0 0 auto;
+  width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center;
+  color: var(--cinza-medio); font-size: .9rem; text-decoration: none;
+}
+.gaveta-fechar:hover { background: var(--cinza-fundo); text-decoration: none; }
+.gaveta-painel .campo { margin-bottom: .95rem; }
+.gaveta-painel .barra-acoes { margin-top: 1.3rem; }
+
+@media (max-width: 560px) {
+  .gaveta-painel { width: 100%; }
+}
+
+/* ------------------------------- Senha provisoria, mostrada uma vez */
+.card.destaque-senha { border-left: 4px solid var(--verde); }
+.card.destaque-senha .senha-nova {
+  font-size: 1.25rem; font-weight: 700; letter-spacing: .06em;
+  color: var(--azul);
+}

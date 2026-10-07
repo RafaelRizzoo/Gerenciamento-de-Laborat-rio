@@ -208,6 +208,13 @@ SITUACOES_FDS = {
     "SEM_FDS": "Sem FDS anexada",
 }
 
+# O filtro da tela não oferece "Sem FDS anexada": anexar a FDS é o passo 1 do
+# cadastro, então nenhuma solicitação nova chega sem ela. O estado continua
+# existindo para rotular registros antigos.
+SITUACOES_FDS_FILTRO = {
+    chave: rotulo for chave, rotulo in SITUACOES_FDS.items() if chave != "SEM_FDS"
+}
+
 
 # =====================================================================
 # Tabelas
@@ -224,6 +231,10 @@ class Usuario(Base):
     papel: Mapped[str] = mapped_column(Unicode(40), nullable=False, default="SOLICITANTE")
     setor: Mapped[str | None] = mapped_column(Unicode(120), nullable=True)
     ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Quem entra com senha provisória é obrigado a trocar no primeiro acesso.
+    precisa_trocar_senha: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True, default=False
+    )
     criado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     @property

@@ -45,6 +45,7 @@ from models import (
     SECOES_RECURSO,
     SIM_NAO,
     SITUACOES_FDS,
+    SITUACOES_FDS_FILTRO,
     TIPOS_MIDIA,
     STATUS,
     STATUS_ABERTOS,
@@ -126,8 +127,16 @@ def exigir_login(req):
         barrado = exigir_login(req)
         if barrado:
             return barrado
+
+    Quem entrou com senha provisória é desviado para a troca de senha antes
+    de chegar a qualquer tela que exija login.
     """
     if logado(req):
+        usuario = eu(req)
+        if getattr(usuario, "precisa_trocar_senha", False) and (
+            req.url.path != "/trocar-senha"
+        ):
+            return RedirectResponse("/trocar-senha", status_code=303)
         return None
     destino = quote(req.url.path, safe="/")
     if req.url.query:
@@ -271,6 +280,82 @@ def get(sess):
     return RedirectResponse("/", status_code=303)
 
 
+# ---------------------------------------------------------------------
+# Troca de senha
+# ---------------------------------------------------------------------
+# Quem recebeu senha provisória cai aqui antes de qualquer tela que exija
+# login (ver `exigir_login`), e só sai depois de escolher uma senha sua.
+
+SENHA_MINIMA = 8
+
+
+@rt("/trocar-senha")
+def get(req, erro: str = "", ok: str = ""):
+    if not logado(req):
+        return RedirectResponse("/login?proximo=/trocar-senha", status_code=303)
+    usuario = eu(req)
+    obrigatoria = bool(getattr(usuario, "precisa_trocar_senha", False))
+
+    formulario = Form(
+        ui.campo("Senha atual", "atual", tipo="password", obrigatório=True,
+                 ajuda="A provisória que você recebeu." if obrigatoria else None),
+        ui.campo("Nova senha", "nova", tipo="password", obrigatório=True,
+                 ajuda=f"Pelo menos {SENHA_MINIMA} caracteres."),
+        ui.campo("Repita a nova senha", "confirma", tipo="password", obrigatório=True),
+        Div(
+            Button("Salvar senha", cls="btn verde", type="submit"),
+            A("Cancelar", href="/", cls="btn secundario") if not obrigatoria else None,
+            cls="barra-acoes",
+        ),
+        method="post",
+        action="/trocar-senha",
+    )
+
+    return ui.pagina(
+        "Trocar senha",
+        ui.alerta(erro, "erro") if erro else None,
+        ui.alerta(ok, "sucesso") if ok else None,
+        ui.alerta(
+            "Seu acesso foi criado com uma senha provisória. Escolha uma senha "
+            "sua para continuar.",
+            "aviso",
+        ) if obrigatoria else None,
+        Div(formulario, cls="card"),
+        usuario=usuario,
+        voltar=None if obrigatoria else "/",
+        subtitulo=usuario.email,
+    )
+
+
+@rt("/trocar-senha")
+async def post(req, sess):
+    if not logado(req):
+        return RedirectResponse("/login", status_code=303)
+    usuario = eu(req)
+    form = await req.form()
+    atual = form.get("atual") or ""
+    nova = form.get("nova") or ""
+    confirma = form.get("confirma") or ""
+
+    def voltar(texto):
+        return RedirectResponse(_msg("/trocar-senha", "erro", texto), status_code=303)
+
+    with db_session() as s:
+        pessoa = s.get(Usuario, usuario.id)
+        if not verificar_senha(atual, pessoa.senha_hash):
+            return voltar("A senha atual não confere.")
+        if len(nova) < SENHA_MINIMA:
+            return voltar(f"A nova senha precisa de pelo menos {SENHA_MINIMA} caracteres.")
+        if nova != confirma:
+            return voltar("As duas senhas digitadas não são iguais.")
+        if verificar_senha(nova, pessoa.senha_hash):
+            return voltar("A nova senha precisa ser diferente da atual.")
+        servicos.definir_senha(s, pessoa, nova)
+    return RedirectResponse(
+        _msg("/", "ok", "Senha alterada. Bom trabalho!"), status_code=303
+    )
+
+
 # =====================================================================
 # Dashboard
 # =====================================================================
@@ -360,8 +445,8 @@ def get(req, erro: str = "", ok: str = ""):
             ui.alerta(erro, "erro") if erro else None,
             ui.alerta(ok, "sucesso") if ok else None,
             Div(*atalhos, cls="atalhos"),
-            indicadores_home,
             resumo,
+            indicadores_home,
             cls="faixa-atalhos",
         ),
         usuario=usuario,
@@ -1286,10 +1371,16 @@ def get(req):
     )
 
 
-def _painel_aprovadores(aprovadores: dict, pessoas: list):
-    """Quem aprova por cada área — editável sem mexer no código."""
+def _painel_aprovadores(aprovadores: dict, pessoas: list, areas_geridas: list):
+    """Quem aprova por cada área — editável sem mexer no código.
+
+    `areas_geridas` limita o que aparece: Admin e Aprovador Final veem todas,
+    e um aprovador vê apenas a própria área.
+    """
     cartoes = []
     for area, rotulo in FLUXO_APROVACAO:
+        if area not in areas_geridas:
+            continue
         lista = aprovadores.get(area, [])
         linhas = [
             Div(
@@ -1327,22 +1418,76 @@ def _painel_aprovadores(aprovadores: dict, pessoas: list):
                 cls="area-card",
             )
         )
+    if not cartoes:
+        return None
+    um_so = len(areas_geridas) == 1
     return Div(
         Div(
             H2("Aprovadores por área"),
-            Span("Admin e Aprovador Final podem alterar", cls="direita"),
+            Span(
+                dict(FLUXO_APROVACAO).get(areas_geridas[0], "") if um_so
+                else "Admin e Aprovador Final podem alterar",
+                cls="direita",
+            ),
             cls="card-titulo",
         ),
         P(
             "Cada área pode ter quantas pessoas quiser e basta UMA delas registrar "
-            "o parecer para a área concluir. Quem não aparecer na lista precisa "
-            "primeiro ter usuário cadastrado em ",
-            A("Usuários", href="/usuarios"),
-            ".",
+            "o parecer para a área concluir. Para incluir alguém que ainda não tem "
+            "acesso ao sistema, use o botão ",
+            B("Novo aprovador"),
+            " no topo da página.",
             cls="pequeno texto-mudo",
         ),
         Div(*cartoes, cls="areas-gestao"),
         cls="card",
+    )
+
+
+def _gaveta_novo_aprovador(areas_geridas: list):
+    """Painel lateral de cadastro — meia página, sem sair da tela de Aprovações."""
+    if not areas_geridas:
+        return None
+    opcoes = [(a, dict(FLUXO_APROVACAO).get(a, a)) for a in areas_geridas]
+    unica = opcoes[0] if len(opcoes) == 1 else None
+    return Div(
+        A(href="#", cls="gaveta-fundo", aria_label="Fechar"),
+        Div(
+            Div(
+                H2("Novo aprovador", Br(),
+                   Span(unica[1] if unica else "Escolha a área", cls="gaveta-sub")),
+                A("✕", href="#", cls="gaveta-fechar", title="Fechar"),
+                cls="gaveta-topo",
+            ),
+            P(
+                "A pessoa passa a receber os avisos da área e pode registrar "
+                "parecer. Se ela ainda não tiver acesso, o sistema cria o "
+                "cadastro e gera uma senha provisória.",
+                cls="pequeno texto-mudo",
+            ),
+            Form(
+                (Input(type="hidden", name="area", value=unica[0]) if unica
+                 else ui.campo("Área de aprovação", "area", opcoes=opcoes,
+                               obrigatório=True)),
+                ui.campo("Nome completo", "nome", obrigatório=True,
+                         placeholder="Ex.: Luciana Oliveira"),
+                ui.campo("E-mail corporativo", "email", tipo="email", obrigatório=True,
+                         placeholder="nome.sobrenome@tenaris.com",
+                         ajuda="É por ele que a pessoa entra no sistema."),
+                ui.campo("Unidade", "setor", opcoes=FABRICAS,
+                         ajuda="Opcional - só para saber de qual planta ela é."),
+                Div(
+                    Button("Salvar", cls="btn verde", type="submit"),
+                    A("Cancelar", href="#", cls="btn secundario"),
+                    cls="barra-acoes",
+                ),
+                method="post",
+                action="/aprovadores/novo",
+            ),
+            cls="gaveta-painel",
+        ),
+        id="novo-aprovador",
+        cls="gaveta",
     )
 
 
@@ -1411,7 +1556,7 @@ def _tabela_solicitacoes(produtos, areas_usuario):
 
 
 @rt("/aprovacoes")
-def get(req, status: str = "", fabrica: str = "", solicitante: str = "",
+def get(req, sess, status: str = "", fabrica: str = "", solicitante: str = "",
         de: str = "", ate: str = "", q: str = "", ok: str = "", erro: str = ""):
     """Gestão do fluxo de aprovação. Exige login."""
     barrado = exigir_login(req)
@@ -1439,8 +1584,10 @@ def get(req, status: str = "", fabrica: str = "", solicitante: str = "",
             s.scalars(select(Usuario).order_by(Usuario.nome)).unique()
         )
         opcoes_solicitante = [(str(u.id), u.nome) for u in solicitantes]
-        # Gestão da lista de aprovadores (Admin e Aprovador Final).
-        gerencia = usuario.papel in ("ADMIN", "APROVADOR_FINAL")
+        # Gestão da lista de aprovadores. Admin e Aprovador Final cuidam de
+        # todas as áreas; um aprovador cuida apenas da própria.
+        areas_geridas = servicos.areas_gerenciaveis(s, s.get(Usuario, usuario.id))
+        gerencia = bool(areas_geridas)
         aprovadores = servicos.mapa_aprovadores(s) if gerencia else {}
         pessoas = (
             [(str(u.id), f"{u.nome} ({u.email})") for u in solicitantes if u.ativo]
@@ -1499,10 +1646,41 @@ def get(req, status: str = "", fabrica: str = "", solicitante: str = "",
         action="/aprovacoes",
     )
 
+    # A senha provisória aparece uma única vez, para quem acabou de cadastrar.
+    criado = sess.pop("senha_nova", None)
+    aviso_senha = (
+        Div(
+            Div(H2("Acesso criado"), cls="card-titulo"),
+            P(
+                B(criado["nome"]), " já pode entrar no sistema. Passe estes dados "
+                "para a pessoa — a senha aparece só desta vez.",
+            ),
+            Div(
+                Div(Div("E-mail", cls="rot"), Div(criado["email"], cls="val mono"),
+                    cls="item"),
+                Div(Div("Senha provisória", cls="rot"),
+                    Div(criado["senha"], cls="val mono senha-nova"), cls="item"),
+                cls="ficha",
+            ),
+            P(
+                "No primeiro acesso o sistema pede para ela trocar por uma senha "
+                "própria. O aviso também ficou registrado em ",
+                A("Notificações", href="/notificacoes"),
+                ", e vai por e-mail assim que o servidor da Tenaris estiver "
+                "configurado.",
+                cls="pequeno texto-mudo",
+            ),
+            cls="card destaque-senha",
+        )
+        if criado and criado.get("senha")
+        else None
+    )
+
     return ui.pagina(
         "Aprovações",
         ui.alerta(ok, "sucesso") if ok else None,
         ui.alerta(erro, "erro") if erro else None,
+        aviso_senha,
         painel,
         Div(filtros, cls="card"),
         ui.alerta(
@@ -1521,7 +1699,7 @@ def get(req, status: str = "", fabrica: str = "", solicitante: str = "",
             ),
             "info",
         ),
-        _painel_aprovadores(aprovadores, pessoas) if gerencia else None,
+        _painel_aprovadores(aprovadores, pessoas, areas_geridas) if gerencia else None,
         Div(
             Div(
                 H2("Solicitações"),
@@ -1531,14 +1709,71 @@ def get(req, status: str = "", fabrica: str = "", solicitante: str = "",
             _tabela_solicitacoes(produtos, areas_usuario),
             cls="card",
         ),
+        _gaveta_novo_aprovador(areas_geridas),
         usuario=usuario,
         subtitulo="Gestão do fluxo de validação dos produtos químicos",
+        acoes=[
+            A("+ Novo aprovador", href="#novo-aprovador", cls="btn")
+            if gerencia else None,
+        ],
+    )
+
+
+def _erro_aprovadores(texto: str):
+    return RedirectResponse(_msg("/aprovacoes", "erro", texto), status_code=303)
+
+
+@rt("/aprovadores/novo")
+async def post(req, sess):
+    """Cadastra uma pessoa e já a vincula a uma área, pela gaveta lateral."""
+    barrado = exigir_login(req)
+    if barrado:
+        return barrado
+    usuario = eu(req)
+    form = await req.form()
+    area = (form.get("area") or "").strip()
+    nome = (form.get("nome") or "").strip()
+    email = (form.get("email") or "").strip().lower()
+    setor = (form.get("setor") or "").strip() or None
+
+    if not nome or "@" not in email:
+        return _erro_aprovadores("Informe o nome completo e o e-mail corporativo.")
+
+    with db_session() as s:
+        autor = s.get(Usuario, usuario.id)
+        geridas = servicos.areas_gerenciaveis(s, autor)
+        if not geridas:
+            return _erro_aprovadores(
+                "Você não gerencia nenhuma área de aprovação."
+            )
+        if not area and len(geridas) == 1:
+            area = geridas[0]
+        if area not in geridas:
+            return _erro_aprovadores(
+                "Você só pode incluir aprovadores nas áreas que gerencia."
+            )
+        try:
+            pessoa, senha = servicos.criar_aprovador(s, area, nome, email, setor, autor)
+        except ValueError as exc:
+            return _erro_aprovadores(str(exc))
+        dados = {"nome": pessoa.nome, "email": pessoa.email, "senha": senha}
+        rotulo = dict(FLUXO_APROVACAO).get(area, area)
+
+    if senha:
+        # A senha provisória não vai pela URL nem por e-mail: fica guardada na
+        # sessão de quem cadastrou e aparece uma única vez na próxima tela.
+        sess["senha_nova"] = dados
+        return RedirectResponse("/aprovacoes", status_code=303)
+    return RedirectResponse(
+        _msg("/aprovacoes", "ok",
+             f"{dados['nome']} passou a aprovar por {rotulo} com o acesso que já tinha."),
+        status_code=303,
     )
 
 
 @rt("/aprovadores/adicionar")
 async def post(req):
-    barrado = exigir_papel(req, "APROVADOR_FINAL")
+    barrado = exigir_login(req)
     if barrado:
         return barrado
     usuario = eu(req)
@@ -1546,16 +1781,17 @@ async def post(req):
     area = (form.get("area") or "").strip()
     uid = (form.get("usuario_id") or "").strip()
     if area not in dict(FLUXO_APROVACAO) or not uid.isdigit():
-        return RedirectResponse(
-            _msg("/aprovacoes", "erro", "Selecione a área e a pessoa."), status_code=303
-        )
+        return _erro_aprovadores("Selecione a área e a pessoa.")
     with db_session() as s:
+        autor = s.get(Usuario, usuario.id)
+        if not servicos.pode_gerenciar_area(s, autor, area):
+            return _erro_aprovadores(
+                "Você só pode incluir aprovadores nas áreas que gerencia."
+            )
         pessoa = s.get(Usuario, int(uid))
         if not pessoa:
-            return RedirectResponse(
-                _msg("/aprovacoes", "erro", "Usuário não encontrado."), status_code=303
-            )
-        servicos.adicionar_aprovador(s, area, pessoa, s.get(Usuario, usuario.id))
+            return _erro_aprovadores("Usuário não encontrado.")
+        servicos.adicionar_aprovador(s, area, pessoa, autor)
         nome, rotulo = pessoa.nome, dict(FLUXO_APROVACAO).get(area, area)
     return RedirectResponse(
         _msg("/aprovacoes", "ok", f"{nome} passou a aprovar por {rotulo}."),
@@ -1565,7 +1801,7 @@ async def post(req):
 
 @rt("/aprovadores/remover")
 async def post(req):
-    barrado = exigir_papel(req, "APROVADOR_FINAL")
+    barrado = exigir_login(req)
     if barrado:
         return barrado
     usuario = eu(req)
@@ -1573,11 +1809,14 @@ async def post(req):
     area = (form.get("area") or "").strip()
     uid = (form.get("usuario_id") or "").strip()
     if area not in dict(FLUXO_APROVACAO) or not uid.isdigit():
-        return RedirectResponse(
-            _msg("/aprovacoes", "erro", "Dados inválidos."), status_code=303
-        )
+        return _erro_aprovadores("Dados inválidos.")
     with db_session() as s:
-        servicos.remover_aprovador(s, area, int(uid), s.get(Usuario, usuario.id))
+        autor = s.get(Usuario, usuario.id)
+        if not servicos.pode_gerenciar_area(s, autor, area):
+            return _erro_aprovadores(
+                "Você só pode remover aprovadores das áreas que gerencia."
+            )
+        servicos.remover_aprovador(s, area, int(uid), autor)
         rotulo = dict(FLUXO_APROVACAO).get(area, area)
     return RedirectResponse(
         _msg("/aprovacoes", "ok", f"Aprovador removido de {rotulo}."), status_code=303
@@ -3461,7 +3700,6 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
         )
         pode = bool(areas_permitidas)
         pode_reenviar = False if publico else servicos.pode_corrigir(u_atual, produto)
-        obs = [] if publico else servicos.observacoes(s, pid)
         eventos = (
             []
             if publico
@@ -3596,18 +3834,6 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
         else None
     )
 
-    form_observacao = (
-        Form(
-            ui.campo("Observação", "texto", linhas=2, obrigatório=True,
-                     ajuda="Fica no histórico e não altera o status da solicitação."),
-            Button("Registrar observação", cls="btn secundario", type="submit"),
-            method="post",
-            action=f"/produtos/{produto.id}/observacao",
-        )
-        if not publico
-        else None
-    )
-
     form_reenvio = (
         Form(
             ui.campo("O que foi corrigido", "resposta", linhas=3, obrigatório=True,
@@ -3617,52 +3843,6 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
             action=f"/produtos/{produto.id}/reenviar",
         )
         if pode_reenviar
-        else None
-    )
-
-    cartao_observacoes = (
-        Div(
-            Div(
-                H2("Observações da análise"),
-                Span(f"{len(obs)} registro(s)", cls="direita"),
-                cls="card-titulo",
-            ),
-            Div(
-                *[
-                    Div(
-                        Div(
-                            Span(o.usuario.iniciais if o.usuario else "?", cls="avatar"),
-                            Span(
-                                B(o.usuario.nome if o.usuario else "Sistema"),
-                                " · ",
-                                Span(
-                                    o.usuario.papel_label if o.usuario else "-",
-                                    cls="texto-mudo",
-                                ),
-                                cls="quem",
-                            ),
-                            Span(
-                                o.criado_em.strftime("%d/%m/%Y %H:%M"),
-                                cls="pequeno texto-mudo direita",
-                            ),
-                            cls="obs-topo",
-                        ),
-                        P(o.detalhe, cls="obs-texto"),
-                        cls="obs",
-                    )
-                    for o in obs
-                ],
-                cls="lista-obs",
-            )
-            if obs
-            else ui.vazio("Nenhuma observação registrada.", "✎"),
-            Hr(style="border:0;border-top:1px solid var(--cinza-fundo);margin:1.1rem 0")
-            if form_observacao
-            else None,
-            form_observacao,
-            cls="card",
-        )
-        if not publico
         else None
     )
 
@@ -3823,7 +4003,6 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
         cartao_fds,
         cartao_controle,
         documentos,
-        cartao_observacoes,
         Div(Div(H2("Histórico de alterações"), cls="card-titulo"), _tabela_eventos(eventos),
             cls="card") if not publico else None,
     )
@@ -4283,29 +4462,6 @@ async def post(req, pid: int):
     )
 
 
-@rt("/produtos/{pid}/observacao")
-async def post(req, pid: int):
-    """Observação de análise: entra no histórico e não muda o status."""
-    barrado = exigir_login(req)
-    if barrado:
-        return barrado
-    usuario = eu(req)
-    form = await req.form()
-    texto = (form.get("texto") or "").strip()
-    if not texto:
-        return RedirectResponse(
-            _msg(f"/produtos/{pid}", "erro", "Escreva a observação."), status_code=303
-        )
-    with db_session() as s:
-        produto = s.get(Produto, pid)
-        if not produto:
-            return RedirectResponse("/aprovacoes", status_code=303)
-        servicos.registrar_observacao(s, produto, s.get(Usuario, usuario.id), texto)
-    return RedirectResponse(
-        _msg(f"/produtos/{pid}", "ok", "Observação registrada."), status_code=303
-    )
-
-
 @rt("/produtos/{pid}/descontinuar")
 async def post(req, pid: int):
     barrado = exigir_papel(req, "APROVADOR_FINAL", "QUIMICO_RESPONSAVEL")
@@ -4506,7 +4662,7 @@ def _filtros_fds(q, fabrica, tipo_produto, orgao, situacao):
             ),
             ui.campo(
                 "Situação da FDS", "situacao", valor=situacao,
-                opcoes=[(k, v) for k, v in SITUACOES_FDS.items()],
+                opcoes=[(k, v) for k, v in SITUACOES_FDS_FILTRO.items()],
             ),
             Div(
                 Button("Filtrar", cls="btn", type="submit"),

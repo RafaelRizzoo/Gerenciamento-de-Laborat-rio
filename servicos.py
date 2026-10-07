@@ -899,6 +899,89 @@ def mapa_aprovadores(sessao) -> dict[str, list[Usuario]]:
     return {chave: aprovadores_da_area(sessao, chave) for chave, _ in FLUXO_APROVACAO}
 
 
+def areas_gerenciaveis(sessao, usuario: Usuario) -> list[str]:
+    """Áreas em que esta pessoa pode incluir ou remover aprovadores.
+
+    Admin e Aprovador Final cuidam de todas. Um aprovador cuida apenas da
+    própria área: quem responde por Meio Ambiente só mexe em Meio Ambiente.
+    """
+    if usuario is None or not usuario.ativo:
+        return []
+    if usuario.papel in ("ADMIN", "APROVADOR_FINAL"):
+        return [chave for chave, _ in FLUXO_APROVACAO]
+    return [a for a in areas_do_usuario(sessao, usuario) if a in dict(FLUXO_APROVACAO)]
+
+
+def pode_gerenciar_area(sessao, usuario: Usuario, area: str) -> bool:
+    return area in areas_gerenciaveis(sessao, usuario)
+
+
+def _senha_provisoria() -> str:
+    """Senha temporária legível, para ser ditada ou colada uma única vez."""
+    alfabeto = "ABCDEFGHJKLMNPQRSTUVWXYZ"  # sem I e O, que se confundem com 1 e 0
+    letras = "".join(secrets.choice(alfabeto) for _ in range(4))
+    numeros = "".join(secrets.choice("23456789") for _ in range(4))
+    return f"{letras}-{numeros}"
+
+
+def definir_senha(sessao, usuario: Usuario, nova: str) -> Usuario:
+    """Troca a senha e tira a marca de senha provisória."""
+    usuario.senha_hash = gerar_hash(nova)
+    usuario.precisa_trocar_senha = False
+    sessao.flush()
+    registrar_log(sessao, "SENHA_ALTERADA", "Senha alterada pelo próprio usuário.",
+                  usuario.id)
+    return usuario
+
+
+def criar_aprovador(sessao, area: str, nome: str, email: str,
+                    setor: str | None = None, autor=None) -> tuple[Usuario, str | None]:
+    """Cadastra a pessoa e já a vincula à área.
+
+    Devolve (usuário, senha_provisória). A senha vem preenchida só quando o
+    usuário foi criado agora - para quem já tinha cadastro, nada muda na
+    senha, apenas o vínculo com a área.
+    """
+    email = (email or "").strip().lower()
+    nome = (nome or "").strip()
+    if not nome or "@" not in email:
+        raise ValueError("Informe o nome e um e-mail válido.")
+    if area not in dict(FLUXO_APROVACAO):
+        raise ValueError("Área de aprovação inválida.")
+
+    existente = sessao.scalar(select(Usuario).where(Usuario.email == email))
+    senha = None
+    if existente:
+        usuario = existente
+        usuario.ativo = True
+        if setor and not usuario.setor:
+            usuario.setor = setor
+    else:
+        senha = _senha_provisoria()
+        usuario = Usuario(
+            nome=nome,
+            email=email,
+            senha_hash=gerar_hash(senha),
+            papel=area,
+            setor=setor or None,
+            ativo=True,
+            precisa_trocar_senha=True,
+        )
+        sessao.add(usuario)
+        sessao.flush()
+        registrar_log(
+            sessao,
+            "USUARIO_CRIADO",
+            f"{usuario.nome} <{usuario.email}> cadastrado como aprovador de "
+            f"{dict(FLUXO_APROVACAO).get(area, area)}.",
+            autor.id if autor else None,
+        )
+
+    adicionar_aprovador(sessao, area, usuario, autor=autor)
+    notificacoes.notificar_novo_aprovador(sessao, usuario, area, senha)
+    return usuario, senha
+
+
 def adicionar_aprovador(sessao, area: str, usuario: Usuario, autor=None) -> AreaAprovador:
     """Vincula uma pessoa a uma área (idempotente)."""
     vinculo = sessao.scalar(
