@@ -9,6 +9,7 @@ import notificacoes
 from security import gerar_hash
 from models import (
     AREAS_APROVACAO,
+    EPIS,
     ETAPA_FINAL,
     FLUXO_APROVACAO,
     ORGAOS_CONTROLADORES,
@@ -21,6 +22,7 @@ from models import (
     LogAuditoria,
     Produto,
     ProdutoFabrica,
+    ProdutoEPI,
     ProdutoRisco,
     Usuario,
 )
@@ -68,7 +70,6 @@ def criar_solicitacao(sessao, dados: dict, solicitante: Usuario, arquivos: list[
         nome_comercial=dados["nome_comercial"],
         nome_tecnico=dados.get("nome_tecnico"),
         fabricante=dados["fabricante"],
-        fornecedor=dados.get("fornecedor"),
         categoria=dados.get("categoria"),
         tipo_produto=dados.get("tipo_produto"),
         numero_cas=dados.get("numero_cas"),
@@ -78,11 +79,14 @@ def criar_solicitacao(sessao, dados: dict, solicitante: Usuario, arquivos: list[
         area_solicitante=dados.get("area_solicitante"),
         prazo_utilizacao=dados.get("prazo_utilizacao"),
         aplicacao=dados.get("aplicacao"),
+        forma_aplicacao=dados.get("forma_aplicacao"),
         necessidade_uso=dados.get("necessidade_uso"),
-        motivo_desenvolvimento=dados.get("motivo_desenvolvimento"),
         funcionarios_expostos=dados.get("funcionarios_expostos"),
         funcoes_expostas=dados.get("funcoes_expostas"),
-        solicitante_terceiro=dados.get("solicitante_terceiro"),
+        terceiro_nome=dados.get("terceiro_nome"),
+        terceiro_empresa=dados.get("terceiro_empresa"),
+        gestor_contrato=dados.get("gestor_contrato"),
+        gestor_email=dados.get("gestor_email"),
         processo=dados.get("processo"),
         consumo_estimado=dados.get("consumo_estimado"),
         unidade=dados.get("unidade"),
@@ -195,6 +199,22 @@ def aplicar_riscos(sessao, produto: Produto, classes: list[str]) -> None:
     sessao.flush()
 
 
+def aplicar_epis(sessao, produto: Produto, epis: list[str]) -> None:
+    """Deixa os EPIs obrigatórios do produto exatamente iguais aos informados.
+
+    Só a área de Segurança mexe nisto, ao registrar o parecer.
+    """
+    permitidos = set(EPIS)
+    desejados = {e.strip() for e in epis if e and e.strip() in permitidos}
+    atuais = {e.epi: e for e in produto.epis}
+    for epi, registro in atuais.items():
+        if epi not in desejados:
+            sessao.delete(registro)
+    for epi in desejados - set(atuais):
+        sessao.add(ProdutoEPI(produto_id=produto.id, epi=epi))
+    sessao.flush()
+
+
 def produto_duplicado(sessao, nome_comercial: str, fabricante: str) -> Produto | None:
     """Já existe cadastro com o mesmo nome comercial e fabricante?
 
@@ -245,9 +265,10 @@ def aplicar_controles(sessao, produto: Produto, controles: list[dict]) -> None:
 def atualizar_ficha(sessao, produto: Produto, dados: dict, usuario: Usuario) -> Produto:
     """Atualiza os dados de identificação, aplicação e controle regulatório."""
     campos = (
-        "nome_tecnico", "fornecedor", "categoria", "tipo_produto", "numero_cas",
+        "nome_tecnico", "categoria", "tipo_produto", "numero_cas",
         "composicao", "estado_fisico", "aplicacao", "processo",
-        "necessidade_uso", "motivo_desenvolvimento", "solicitante_terceiro",
+        "necessidade_uso", "forma_aplicacao",
+        "terceiro_nome", "terceiro_empresa", "gestor_contrato", "gestor_email",
         "funcionarios_expostos", "funcoes_expostas",
         "area_solicitante", "prazo_utilizacao", "consumo_estimado", "unidade",
         "local_armazenamento", "classificacao_ghs", "onu_numero",
@@ -336,16 +357,9 @@ def pode_decidir(sessao, usuario: Usuario, produto: Produto) -> bool:
     return bool(areas_para_decidir(sessao, usuario, produto))
 
 
-def pode_corrigir(usuario: Usuario, produto: Produto) -> bool:
-    """Só o solicitante (ou o admin) reenvia uma solicitação devolvida."""
-    if produto.status != "AGUARDANDO_CORRECAO":
-        return False
-    return usuario.id == produto.solicitante_id or usuario.papel == "ADMIN"
-
-
 def registrar_decisao(
     sessao, produto: Produto, usuario: Usuario, decisao: str, parecer: str,
-    area: str | None = None,
+    area: str | None = None, epis: list[str] | None = None,
 ) -> Produto:
     """Registra o parecer de UMA área e reavalia a situação do produto.
 
@@ -358,6 +372,10 @@ def registrar_decisao(
         area = permitidas[0] if len(permitidas) == 1 else None
     if area is None or area not in permitidas:
         raise ValueError("Etapa de aprovação inválida para este usuário.")
+
+    # Os EPIs obrigatórios são decisão da área de Segurança.
+    if epis is not None and area == "SEGURANCA":
+        aplicar_epis(sessao, produto, epis)
 
     aprovacao = next((a for a in produto.aprovacoes if a.etapa == area), None)
     if aprovacao is None:
@@ -406,57 +424,6 @@ def registrar_decisao(
     elif produto.etapa_atual == ETAPA_FINAL:
         # Só agora o Aprovador Final é chamado.
         notificacoes.notificar_etapa_pendente(sessao, produto, ETAPA_FINAL)
-    return produto
-
-
-def solicitar_correcao(sessao, produto: Produto, usuario: Usuario, motivo: str) -> Produto:
-    """Devolve a solicitação ao solicitante sem reprovar.
-
-    A etapa atual NÃO muda: quando o solicitante reenviar, a análise retoma
-    exatamente com quem pediu a correção. As etapas já aprovadas continuam
-    valendo.
-    """
-    status_antes = produto.status
-    etapa = usuario.papel if usuario.papel in dict(FLUXO_APROVACAO) else (
-        (produto.areas_pendentes or [ETAPA_FINAL])[0]
-    )
-    produto.status = "AGUARDANDO_CORRECAO"
-    produto.pendencia = motivo
-    produto.atualizado_em = datetime.now()
-    sessao.flush()
-
-    registrar_log(
-        sessao,
-        "CORRECAO_SOLICITADA",
-        f"{dict(FLUXO_APROVACAO).get(etapa, etapa)} solicitou correção: {motivo}",
-        usuario.id,
-        produto.id,
-        status_anterior=status_antes,
-        status_novo=produto.status,
-    )
-    notificacoes.notificar_correcao(sessao, produto, etapa, motivo)
-    return produto
-
-
-def reenviar_apos_correcao(sessao, produto: Produto, usuario: Usuario, resposta: str) -> Produto:
-    """O solicitante devolve a solicitação para análise após corrigir."""
-    status_antes = produto.status
-    decididas = any(a.decisao != "PENDENTE" for a in produto.aprovacoes)
-    produto.status = "EM_ANALISE" if decididas else "PENDENTE"
-    produto.pendencia = None
-    produto.atualizado_em = datetime.now()
-    sessao.flush()
-
-    registrar_log(
-        sessao,
-        "CORRECAO_REENVIADA",
-        f"{usuario.nome} reenviou a solicitação após correção. {resposta}".strip(),
-        usuario.id,
-        produto.id,
-        status_anterior=status_antes,
-        status_novo=produto.status,
-    )
-    notificacoes.notificar_reenvio(sessao, produto, resposta)
     return produto
 
 

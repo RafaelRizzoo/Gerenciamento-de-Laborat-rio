@@ -19,6 +19,7 @@ from sqlalchemy import desc, select
 
 import config
 import extracao
+import idiomas
 import notificacoes
 import servicos
 import ui
@@ -43,6 +44,8 @@ from models import (
     ICONE_SECAO,
     ROTULOS_GRUPO_ARQUIVO,
     SECOES_RECURSO,
+    EPIS,
+    FORMAS_APLICACAO,
     SIM_NAO,
     SITUACOES_FDS,
     SITUACOES_FDS_FILTRO,
@@ -106,6 +109,9 @@ app, rt = fast_app(
     title=config.APP_NOME,
     canonical=False,
 )
+
+# Idioma da interface (PT / EN / ES) - ver idiomas.py.
+idiomas.instalar(app)
 
 
 def eu(req) -> Usuario | None:
@@ -198,13 +204,14 @@ def arquivos_estaticos(fname: str, ext: str):
 
 
 def _tela_login(mensagem: str | None = None, email: str = "", proximo: str = "/"):
-    return (
+    return idiomas.traduzir((
         *ui.cabeca("Acesso ao sistema"),
         Div(
             Div(
                 Div(
                     B(config.APP_EMPRESA),
                     Span("Gestão de Produtos Químicos"),
+                    idiomas.seletor(),
                     cls="topo",
                 ),
                 Div(
@@ -250,7 +257,7 @@ def _tela_login(mensagem: str | None = None, email: str = "", proximo: str = "/"
             ),
             cls="login-fundo",
         ),
-    )
+    ))
 
 
 @rt("/login")
@@ -278,6 +285,24 @@ async def post(req, sess):
 def get(sess):
     sess.pop("uid", None)
     return RedirectResponse("/", status_code=303)
+
+
+# ---------------------------------------------------------------------
+# Idioma da interface
+# ---------------------------------------------------------------------
+# O seletor PT · EN · ES da barra superior aponta para cá. A escolha fica
+# guardada na sessão e a pessoa volta para a página em que estava.
+
+
+@rt("/idioma/{codigo}")
+def get(req, sess, codigo: str):
+    sess["idioma"] = idiomas.definir(codigo)
+    volta = req.headers.get("referer") or "/"
+    # Só aceita voltar para dentro do próprio sistema.
+    if "://" in volta:
+        corte = volta.split("://", 1)[1]
+        volta = "/" + corte.split("/", 1)[1] if "/" in corte else "/"
+    return RedirectResponse(volta if volta.startswith("/") else "/", status_code=303)
 
 
 # ---------------------------------------------------------------------
@@ -431,22 +456,14 @@ def get(req, erro: str = "", ok: str = ""):
         cls="painel-inicio",
     )
 
-    resumo = Div(
-        Span(B(str(ind["total_fds"])), " fichas FDS disponíveis"),
-        Span("•", cls="ponto"),
-        Span(B(str(ind["total"])), " produtos cadastrados"),
-        cls="resumo-publico",
-    )
-
     return ui.molde_simples(
         "Início",
         ui.hero(),
         Div(
             ui.alerta(erro, "erro") if erro else None,
             ui.alerta(ok, "sucesso") if ok else None,
-            Div(*atalhos, cls="atalhos"),
-            resumo,
             indicadores_home,
+            Div(*atalhos, cls="atalhos"),
             cls="faixa-atalhos",
         ),
         usuario=usuario,
@@ -489,13 +506,6 @@ def get(req):
             Div("pendentes + em análise", cls="nota"),
             href="/aprovacoes",
             cls="kpi ambar",
-        ),
-        A(
-            Div("Aguardando correção", cls="rotulo"),
-            Div(str(ind["por_status"].get("AGUARDANDO_CORRECAO", 0)), cls="valor"),
-            Div("devolvidas ao solicitante", cls="nota"),
-            href="/aprovacoes?status=AGUARDANDO_CORRECAO",
-            cls="kpi roxo",
         ),
         A(
             Div("Produtos Aprovados", cls="rotulo"),
@@ -606,7 +616,6 @@ def _tabela_produtos(produtos, prefixo: str = "", mostrar_fluxo: bool = True):
                 Td(A(p.codigo_interno, href=f"{prefixo}/produtos/{p.id}"), cls="mono nowrap"),
                 Td(B(p.nome_comercial), Br(), Span(p.categoria or "-", cls="pequeno texto-mudo")),
                 Td(p.fabricante),
-                Td(p.fornecedor or "-"),
                 Td(ui.badge(p.status)),
                 Td(
                     ui.passos(p),
@@ -621,7 +630,7 @@ def _tabela_produtos(produtos, prefixo: str = "", mostrar_fluxo: bool = True):
                 Td(p.atualizado_em.strftime("%d/%m/%Y"), cls="pequeno nowrap"),
             )
         )
-    cabecalhos = ["Código", "Produto", "Fabricante", "Fornecedor", "Status"]
+    cabecalhos = ["Código", "Produto", "Fabricante", "Status"]
     if mostrar_fluxo:
         cabecalhos.append("Fluxo")
     cabecalhos += ["Docs", "Atualizado"]
@@ -641,7 +650,7 @@ def _barra_filtros(acao: str, termo: str, status: str, categoria: str, com_statu
             "Buscar",
             "q",
             valor=termo,
-            placeholder="nome, fabricante, fornecedor, código ou CAS",
+            placeholder="nome, fabricante, código ou CAS",
         )
     ]
     if com_status:
@@ -839,12 +848,28 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
         ) if usuario is None else None,
         Fieldset(
             Legend("Solicitante terceiro"),
-            ui.campo(
-                "Nome e empresa do solicitante terceiro", "solicitante_terceiro",
-                valor=dados.get("solicitante_terceiro", ""),
-                placeholder="Ex.: João Pereira - Construtora Alfa",
-                ajuda="Preencha apenas quando a solicitação vier de uma empresa "
-                      "terceira. Em branco, vale o solicitante Tenaris acima.",
+            P(
+                "Preencha apenas quando a solicitação vier de uma empresa "
+                "terceira. Em branco, vale o solicitante Tenaris acima.",
+                cls="texto-mudo",
+            ),
+            Div(
+                ui.campo("Nome do solicitante", "terceiro_nome",
+                         valor=dados.get("terceiro_nome", ""),
+                         placeholder="Ex.: João Pereira"),
+                ui.campo("Empresa", "terceiro_empresa",
+                         valor=dados.get("terceiro_empresa", ""),
+                         placeholder="Ex.: Construtora Alfa"),
+                cls="linha-form",
+            ),
+            Div(
+                ui.campo("Gestor Tenaris do contrato", "gestor_contrato",
+                         valor=dados.get("gestor_contrato", ""),
+                         ajuda="Quem responde pelo contrato dessa empresa."),
+                ui.campo("E-mail do gestor", "gestor_email", tipo="email",
+                         valor=dados.get("gestor_email", ""),
+                         placeholder="nome.sobrenome@tenaris.com"),
+                cls="linha-form",
             ),
             cls="secao",
         ),
@@ -860,9 +885,6 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                 cls="linha-form",
             ),
             Div(
-                ui.campo("Fornecedor", "fornecedor", valor=dados.get("fornecedor", ""),
-                         obrigatório=True,
-                         ajuda="Quem fornece o produto para a Tenaris."),
                 ui.campo("Número CAS", "numero_cas", valor=dados.get("numero_cas", ""),
                          obrigatório=True, ajuda=auto("numero_cas") or "Ex.: 67-64-1"),
                 cls="linha-form",
@@ -898,18 +920,15 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                 linhas=3, obrigatório=True,
                 ajuda="Onde e como o produto será aplicado no processo.",
             ),
+            ui.campo("Forma de aplicação", "forma_aplicacao",
+                     valor=dados.get("forma_aplicacao", ""),
+                     opcoes=FORMAS_APLICACAO, obrigatório=True,
+                     ajuda="Como o produto é aplicado no processo."),
             ui.campo(
                 "Necessidade de uso", "necessidade_uso",
                 valor=dados.get("necessidade_uso", ""), linhas=3, obrigatório=True,
                 ajuda="Por que a planta precisa deste produto? O que deixa de ser "
                       "feito (ou qual o risco) se ele não for aprovado?",
-            ),
-            ui.campo(
-                "Motivo do desenvolvimento", "motivo_desenvolvimento",
-                valor=dados.get("motivo_desenvolvimento", ""), linhas=2,
-                obrigatório=True,
-                ajuda="Motivo para desenvolver um produto novo em vez de usar um "
-                      "já aprovado (substituição, exigência de cliente, melhoria...).",
             ),
             Div(
                 ui.campo("Prazo de utilização", "prazo_utilizacao",
@@ -960,20 +979,6 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                     cls="ajuda",
                 ),
                 cls="campo",
-            ),
-            Div(
-                ui.campo("Produto controlado", "orgao_controlador",
-                         opcoes=[("NAO", "Não controlado")]
-                         + [(k, v) for k, v in ORGAOS_CONTROLADORES.items()],
-                         valor=dados.get("orgao_controlador") or "NAO",
-                         obrigatório=True),
-                ui.campo("Número da licença", "numero_licenca",
-                         valor=dados.get("numero_licenca", ""),
-                         ajuda="Somente para produto controlado."),
-                ui.campo("Validade da licença", "validade_licenca", tipo="date",
-                         valor=dados.get("validade_licenca", ""),
-                         ajuda="Somente para produto controlado."),
-                cls="linha-form",
             ),
             Div(
                 ui.campo("Inflamável", "inflamavel",
@@ -1108,7 +1113,6 @@ async def post(req, sess):
 
     riscos = [r for r in form.getlist("riscos") if r in CLASSES_RISCO]
     unidade_solicitante = dados.get("unidade_solicitante") or ""
-    orgao = dados.get("orgao_controlador") or "NAO"
     revisao = _data(dados.get("data_revisao_fds"))
 
     def voltar(mensagem: str):
@@ -1124,15 +1128,14 @@ async def post(req, sess):
     obrigatorios = [
         ("nome_comercial", "Nome comercial"),
         ("fabricante", "Nome do fabricante"),
-        ("fornecedor", "Fornecedor"),
         ("numero_cas", "Número CAS"),
         ("tipo_produto", "Tipo de produto"),
         ("categoria", "Categoria química"),
         ("estado_fisico", "Estado físico"),
         ("area_solicitante", "Área solicitante"),
         ("aplicacao", "Finalidade de uso"),
+        ("forma_aplicacao", "Forma de aplicação"),
         ("necessidade_uso", "Necessidade de uso"),
-        ("motivo_desenvolvimento", "Motivo do desenvolvimento"),
         ("prazo_utilizacao", "Prazo de utilização"),
         ("consumo_estimado", "Quantidade prevista"),
         ("unidade", "Unidade de medida"),
@@ -1163,8 +1166,28 @@ async def post(req, sess):
         faltando.append("Prazo de utilização")
     if dados.get("unidade") and dados["unidade"] not in UNIDADES_CONSUMO:
         faltando.append("Unidade de medida")
+    if dados.get("forma_aplicacao") and dados["forma_aplicacao"] not in FORMAS_APLICACAO:
+        faltando.append("Forma de aplicação")
     if faltando:
         return voltar("Preencha os campos obrigatórios: " + ", ".join(dict.fromkeys(faltando)) + ".")
+
+    # Solicitante terceiro é opcional, mas pela metade não serve: se a
+    # solicitação vem de uma empresa terceira, precisamos saber de quem é a
+    # empresa e quem na Tenaris responde pelo contrato.
+    terceiro = {
+        "terceiro_nome": "Nome do solicitante terceiro",
+        "terceiro_empresa": "Empresa do terceiro",
+        "gestor_contrato": "Gestor Tenaris do contrato",
+    }
+    if any(dados.get(c) for c in list(terceiro) + ["gestor_email"]):
+        faltam_terceiro = [rot for c, rot in terceiro.items() if not dados.get(c)]
+        if faltam_terceiro:
+            return voltar(
+                "Solicitação de empresa terceira: preencha também "
+                + ", ".join(faltam_terceiro) + "."
+            )
+        if dados.get("gestor_email") and "@" not in dados["gestor_email"]:
+            return voltar("Informe um e-mail válido para o gestor do contrato.")
 
     # O ponto de fulgor só faz sentido (e é exigido) para inflamáveis.
     if dados.get("inflamavel") == "SIM" and not dados.get("ponto_fulgor"):
@@ -1180,27 +1203,14 @@ async def post(req, sess):
     if usuario is None and "@" not in (dados.get("solicitante_email") or ""):
         return voltar("Informe um e-mail corporativo válido.")
 
-    if orgao != "NAO" and orgao in ORGAOS_CONTROLADORES and not dados.get("numero_licenca"):
-        return voltar(
-            "Produto controlado exige o número da licença do órgão selecionado."
-        )
     if revisao > date.today():
         return voltar("A data de revisão da FDS não pode estar no futuro.")
 
     dados["fabricas"] = [unidade_solicitante]
     dados["setor_solicitante"] = dados.get("area_solicitante")
     dados["riscos"] = riscos
-    dados["controles"] = (
-        [
-            {
-                "orgao": orgao,
-                "numero_licenca": dados.get("numero_licenca"),
-                "validade_licenca": _data(dados.get("validade_licenca")),
-            }
-        ]
-        if orgao in ORGAOS_CONTROLADORES
-        else []
-    )
+    # O controle regulatório (órgão, licença e validade) é preenchido pelo
+    # Químico Responsável na análise: o solicitante não tem essa informação.
 
     arquivos = [
         {
@@ -1371,79 +1381,6 @@ def get(req):
     )
 
 
-def _painel_aprovadores(aprovadores: dict, pessoas: list, areas_geridas: list):
-    """Quem aprova por cada área — editável sem mexer no código.
-
-    `areas_geridas` limita o que aparece: Admin e Aprovador Final veem todas,
-    e um aprovador vê apenas a própria área.
-    """
-    cartoes = []
-    for area, rotulo in FLUXO_APROVACAO:
-        if area not in areas_geridas:
-            continue
-        lista = aprovadores.get(area, [])
-        linhas = [
-            Div(
-                Span(B(u.nome), Br(), Span(u.email, cls="email")),
-                Form(
-                    Input(type="hidden", name="area", value=area),
-                    Input(type="hidden", name="usuario_id", value=str(u.id)),
-                    Button("remover", cls="tirar", type="submit"),
-                    method="post",
-                    action="/aprovadores/remover",
-                ),
-                cls="pessoa",
-            )
-            for u in lista
-        ]
-        if not linhas:
-            linhas = [Div("Nenhum aprovador cadastrado nesta área.", cls="vazio-area")]
-        cartoes.append(
-            Div(
-                H3(rotulo, Span(f"{len(lista)} pessoa(s)", cls="qtd")),
-                *linhas,
-                Form(
-                    Input(type="hidden", name="area", value=area),
-                    Select(
-                        Option("Adicionar pessoa...", value="", selected=True),
-                        *[Option(nome, value=uid) for uid, nome in pessoas],
-                        name="usuario_id",
-                        required=True,
-                    ),
-                    Button("+", cls="btn pequeno", type="submit", title="Adicionar"),
-                    method="post",
-                    action="/aprovadores/adicionar",
-                    cls="incluir",
-                ),
-                cls="area-card",
-            )
-        )
-    if not cartoes:
-        return None
-    um_so = len(areas_geridas) == 1
-    return Div(
-        Div(
-            H2("Aprovadores por área"),
-            Span(
-                dict(FLUXO_APROVACAO).get(areas_geridas[0], "") if um_so
-                else "Admin e Aprovador Final podem alterar",
-                cls="direita",
-            ),
-            cls="card-titulo",
-        ),
-        P(
-            "Cada área pode ter quantas pessoas quiser e basta UMA delas registrar "
-            "o parecer para a área concluir. Para incluir alguém que ainda não tem "
-            "acesso ao sistema, use o botão ",
-            B("Novo aprovador"),
-            " no topo da página.",
-            cls="pequeno texto-mudo",
-        ),
-        Div(*cartoes, cls="areas-gestao"),
-        cls="card",
-    )
-
-
 def _gaveta_novo_aprovador(areas_geridas: list):
     """Painel lateral de cadastro — meia página, sem sair da tela de Aprovações."""
     if not areas_geridas:
@@ -1556,7 +1493,7 @@ def _tabela_solicitacoes(produtos, areas_usuario):
 
 
 @rt("/aprovacoes")
-def get(req, sess, status: str = "", fabrica: str = "", solicitante: str = "",
+def get(req, sess, status: str = "", fabrica: str = "",
         de: str = "", ate: str = "", q: str = "", ok: str = "", erro: str = ""):
     """Gestão do fluxo de aprovação. Exige login."""
     barrado = exigir_login(req)
@@ -1568,7 +1505,6 @@ def get(req, sess, status: str = "", fabrica: str = "", solicitante: str = "",
         # Todo aprovador vê todas as solicitações abertas; agir, só na sua etapa.
         produtos = servicos.buscar_produtos(
             s, q, status=status, fabrica=fabrica,
-            solicitante_id=int(solicitante) if solicitante.isdigit() else None,
             data_de=_data(de), data_ate=_data(ate),
             somente_abertas=not status,
             limite=None,
@@ -1580,20 +1516,10 @@ def get(req, sess, status: str = "", fabrica: str = "", solicitante: str = "",
         u_atual = s.get(Usuario, usuario.id)
         areas_usuario = servicos.areas_do_usuario(s, u_atual)
         minhas = sum(1 for p in produtos if any(p.aguarda(a) for a in areas_usuario))
-        solicitantes = list(
-            s.scalars(select(Usuario).order_by(Usuario.nome)).unique()
-        )
-        opcoes_solicitante = [(str(u.id), u.nome) for u in solicitantes]
-        # Gestão da lista de aprovadores. Admin e Aprovador Final cuidam de
-        # todas as áreas; um aprovador cuida apenas da própria.
-        areas_geridas = servicos.areas_gerenciaveis(s, s.get(Usuario, usuario.id))
+        # Quem pode cadastrar aprovador (gaveta lateral): Admin e Aprovador
+        # Final cuidam de todas as áreas; um aprovador cuida apenas da própria.
+        areas_geridas = servicos.areas_gerenciaveis(s, u_atual)
         gerencia = bool(areas_geridas)
-        aprovadores = servicos.mapa_aprovadores(s) if gerencia else {}
-        pessoas = (
-            [(str(u.id), f"{u.nome} ({u.email})") for u in solicitantes if u.ativo]
-            if gerencia
-            else []
-        )
 
     painel = Div(
         A(
@@ -1614,12 +1540,6 @@ def get(req, sess, status: str = "", fabrica: str = "", solicitante: str = "",
             href="/aprovacoes?status=EM_ANALISE",
             cls="kpi-fds",
         ),
-        A(
-            Div(str(contagem.get("AGUARDANDO_CORRECAO", 0)), cls="valor"),
-            Div("Aguardando correção", cls="rotulo"),
-            href="/aprovacoes?status=AGUARDANDO_CORRECAO",
-            cls="kpi-fds",
-        ),
         cls="painel-fds",
     )
 
@@ -1628,11 +1548,9 @@ def get(req, sess, status: str = "", fabrica: str = "", solicitante: str = "",
             ui.campo("Buscar", "q", valor=q, placeholder="produto, fabricante ou código"),
             ui.campo("Status", "status", valor=status,
                      opcoes=[(k, STATUS[k]) for k in
-                             ("PENDENTE", "EM_ANALISE", "AGUARDANDO_CORRECAO",
+                             ("PENDENTE", "EM_ANALISE",
                               "APROVADO", "REPROVADO")]),
             ui.campo("Unidade", "fabrica", valor=fabrica, opcoes=FABRICAS),
-            ui.campo("Solicitante", "solicitante", valor=solicitante,
-                     opcoes=opcoes_solicitante),
             ui.campo("Data inicial", "de", tipo="date", valor=de),
             ui.campo("Data final", "ate", tipo="date", valor=ate),
             Div(
@@ -1683,23 +1601,6 @@ def get(req, sess, status: str = "", fabrica: str = "", solicitante: str = "",
         aviso_senha,
         painel,
         Div(filtros, cls="card"),
-        ui.alerta(
-            Span(
-                "As áreas analisam em paralelo — não há ordem entre elas. O ",
-                B("Aprovador Final"),
-                " só é acionado quando Meio Ambiente, Saúde, Segurança e Químico "
-                "Responsável concluírem. As linhas destacadas dependem do seu "
-                "parecer",
-                Span(
-                    " (" + ", ".join(
-                        dict(FLUXO_APROVACAO).get(a, a) for a in areas_usuario
-                    ) + ")"
-                ) if areas_usuario else Span(" — você não responde por nenhuma área"),
-                ".",
-            ),
-            "info",
-        ),
-        _painel_aprovadores(aprovadores, pessoas, areas_geridas) if gerencia else None,
         Div(
             Div(
                 H2("Solicitações"),
@@ -3699,7 +3600,20 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
             [] if publico else servicos.areas_para_decidir(s, u_atual, produto)
         )
         pode = bool(areas_permitidas)
-        pode_reenviar = False if publico else servicos.pode_corrigir(u_atual, produto)
+        # Na ordem da lista oficial, não na ordem em que foram marcados.
+        epis_marcados = set(produto.epis_nomes)
+        epis_obrigatorios = [e for e in EPIS if e in epis_marcados]
+        # Já existe controle registrado? O Químico edita em vez de recomeçar.
+        controle_atual = {}
+        for c in produto.controles:
+            controle_atual = {
+                "orgao": c.orgao,
+                "numero_licenca": c.numero_licenca or "",
+                "validade_licenca": (
+                    c.validade_licenca.isoformat() if c.validade_licenca else ""
+                ),
+            }
+            break
         eventos = (
             []
             if publico
@@ -3717,7 +3631,6 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
         ui.item_ficha("Nome comercial", B(produto.nome_comercial)),
         ui.item_ficha("Nome técnico", produto.nome_tecnico),
         ui.item_ficha("Fabricante", produto.fabricante),
-        ui.item_ficha("Fornecedor", produto.fornecedor),
         ui.item_ficha("Categoria", produto.categoria),
         ui.item_ficha("Tipo de produto", produto.tipo_produto),
         ui.item_ficha("Número CAS", produto.numero_cas),
@@ -3733,6 +3646,7 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
         ui.item_ficha("Processo em que é utilizado", produto.processo),
         ui.item_ficha("Área solicitante", produto.area_solicitante
                       or produto.setor_solicitante),
+        ui.item_ficha("Forma de aplicação", produto.forma_aplicacao),
         ui.item_ficha("Prazo de utilização", produto.prazo_utilizacao),
         ui.item_ficha("Local de armazenamento", produto.local_armazenamento),
         ui.item_ficha(
@@ -3758,11 +3672,16 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
         ui.item_ficha("Composição", produto.composicao, largo=True),
         ui.item_ficha("Aplicação / finalidade", produto.aplicacao, largo=True),
         ui.item_ficha("Necessidade de uso", produto.necessidade_uso, largo=True),
-        ui.item_ficha("Motivo do desenvolvimento", produto.motivo_desenvolvimento,
-                      largo=True),
         ui.item_ficha("Função dos colaboradores expostos", produto.funcoes_expostas,
                       largo=True),
-        ui.item_ficha("Solicitante terceiro", produto.solicitante_terceiro, largo=True),
+        ui.item_ficha("Solicitante terceiro", produto.terceiro_label, largo=True),
+        ui.item_ficha(
+            "Gestor Tenaris do contrato",
+            f"{produto.gestor_contrato} ({produto.gestor_email})"
+            if produto.gestor_contrato and produto.gestor_email
+            else produto.gestor_contrato,
+            largo=True,
+        ),
         ui.item_ficha("EPI recomendado", produto.epi_recomendado, largo=True),
         ui.item_ficha("Restrições de uso", produto.restricoes_uso, largo=True),
         ui.item_ficha("Observações", produto.observacoes, largo=True),
@@ -3780,6 +3699,24 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
         if produto.motivo_encerramento
         else None,
         cls="ficha",
+    )
+
+    # EPI definido pela Segurança: destaque, porque é o que quem vai manusear
+    # o produto precisa ver primeiro.
+    cartao_epi = (
+        Div(
+            Div(
+                H2("EPI obrigatório"),
+                Span(f"{len(epis_obrigatorios)} item(ns)", cls="direita"),
+                cls="card-titulo",
+            ),
+            P("Definido pela área de Segurança na análise desta FDS.",
+              cls="pequeno texto-mudo"),
+            Div(*[Span(e, cls="chip epi") for e in epis_obrigatorios], cls="lista-epi"),
+            cls="card destaque-epi",
+        )
+        if epis_obrigatorios
+        else None
     )
 
     rotulos_areas = dict(FLUXO_APROVACAO)
@@ -3805,6 +3742,50 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
                 "Motivo (obrigatório ao reprovar)", "motivo", opcoes=MOTIVOS_REPROVACAO,
                 ajuda="Só é usado quando a decisão é reprovar.",
             ),
+            # A área de Segurança define o EPI obrigatório a partir da FDS.
+            Div(
+                Span("EPI obrigatório para este produto", cls="rot"),
+                P(
+                    "Marque o que a FDS exige. O que você marcar aqui aparece na "
+                    "ficha do produto e no aviso de aprovação.",
+                    cls="pequeno texto-mudo",
+                ),
+                Div(
+                    *[
+                        Label(
+                            Input(type="checkbox", name="epis", value=e,
+                                  checked=(e in epis_marcados)),
+                            Span(e),
+                            cls="caixa-marcar",
+                        )
+                        for e in EPIS
+                    ],
+                    cls="grupo-marcar",
+                ),
+                cls="campo",
+            ) if "SEGURANCA" in areas_permitidas else None,
+            # O Químico Responsável é quem sabe se o produto é controlado e
+            # qual a licença - o solicitante não tem essa informação.
+            Div(
+                Span("Controle regulatório", cls="rot"),
+                P(
+                    "Produto sujeito a controle da Polícia Federal, Polícia Civil "
+                    "ou Exército? Informe o órgão e a licença.",
+                    cls="pequeno texto-mudo",
+                ),
+                Div(
+                    ui.campo("Produto controlado", "orgao_controlador",
+                             opcoes=[("NAO", "Não controlado")]
+                             + [(k, v) for k, v in ORGAOS_CONTROLADORES.items()],
+                             valor=controle_atual.get("orgao", "NAO")),
+                    ui.campo("Número da licença", "numero_licenca",
+                             valor=controle_atual.get("numero_licenca", "")),
+                    ui.campo("Validade da licença", "validade_licenca", tipo="date",
+                             valor=controle_atual.get("validade_licenca", "")),
+                    cls="linha-form",
+                ),
+                cls="campo",
+            ) if "QUIMICO_RESPONSAVEL" in areas_permitidas else None,
             Div(
                 Button("Aprovar", cls="btn verde", type="submit", name="decisao",
                        value="APROVADO"),
@@ -3816,33 +3797,6 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
             action=f"/produtos/{produto.id}/decisao",
         )
         if pode
-        else None
-    )
-
-    form_correcao = (
-        Form(
-            ui.campo(
-                "O que precisa ser corrigido", "motivo", linhas=3, obrigatório=True,
-                ajuda="O solicitante recebe esse texto por e-mail e reenvia depois "
-                      "de corrigir. A análise volta para você.",
-            ),
-            Button("Solicitar correção", cls="btn", type="submit"),
-            method="post",
-            action=f"/produtos/{produto.id}/correcao",
-        )
-        if pode
-        else None
-    )
-
-    form_reenvio = (
-        Form(
-            ui.campo("O que foi corrigido", "resposta", linhas=3, obrigatório=True,
-                     ajuda="Anexe os documentos atualizados antes de reenviar, se for o caso."),
-            Button("Reenviar para análise", cls="btn verde", type="submit"),
-            method="post",
-            action=f"/produtos/{produto.id}/reenviar",
-        )
-        if pode_reenviar
         else None
     )
 
@@ -4019,38 +3973,15 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
             ui.linha_fluxo(produto),
             cls="card",
         ),
+        cartao_epi,
+        # O cartão só aparece para quem tem alguma área pendente nesta
+        # solicitação. Encerrada, ou de área que não é a sua, nem é exibido.
         Div(
             Div(H2("Registrar parecer"), cls="card-titulo"),
-            form_decisao
-            or P(
-                "Você não responde por nenhuma área pendente desta solicitação."
-                if produto.aberta
-                else f"Solicitação encerrada com status: {produto.status_label}.",
-                cls="texto-mudo pequeno",
-            ),
+            form_decisao,
             cls="card",
         )
-        if not publico
-        else None,
-        Div(
-            Div(H2("Solicitar correção"), cls="card-titulo"),
-            form_correcao,
-            cls="card",
-        )
-        if form_correcao
-        else None,
-        Div(
-            Div(H2("Corrigir e reenviar"), cls="card-titulo"),
-            P(
-                "Esta solicitação foi devolvida para correção. Ajuste o que foi "
-                "pedido e reenvie — a análise retoma com "
-                f"{produto.etapa_label or 'a área responsável'}.",
-                cls="pequeno texto-mudo",
-            ),
-            form_reenvio,
-            cls="card",
-        )
-        if form_reenvio
+        if form_decisao is not None and not publico
         else None,
         *[Div(Div(H2("Situação do produto"), cls="card-titulo"), a, cls="card") for a in acoes_status],
     )
@@ -4102,7 +4033,6 @@ def get(req, pid: int, erro: str = ""):
         dados = {
             "nome_comercial": produto.nome_comercial,
             "nome_tecnico": produto.nome_tecnico or "",
-            "fornecedor": produto.fornecedor or "",
             "categoria": produto.categoria or "",
             "tipo_produto": produto.tipo_produto or "",
             "numero_cas": produto.numero_cas or "",
@@ -4121,13 +4051,16 @@ def get(req, pid: int, erro: str = ""):
             "consumo_estimado": produto.consumo_estimado or "",
             "unidade": produto.unidade or "",
             "necessidade_uso": produto.necessidade_uso or "",
-            "motivo_desenvolvimento": produto.motivo_desenvolvimento or "",
+            "forma_aplicacao": produto.forma_aplicacao or "",
             "funcionarios_expostos": (
                 "" if produto.funcionarios_expostos is None
                 else str(produto.funcionarios_expostos)
             ),
             "funcoes_expostas": produto.funcoes_expostas or "",
-            "solicitante_terceiro": produto.solicitante_terceiro or "",
+            "terceiro_nome": produto.terceiro_nome or "",
+            "terceiro_empresa": produto.terceiro_empresa or "",
+            "gestor_contrato": produto.gestor_contrato or "",
+            "gestor_email": produto.gestor_email or "",
             "inflamavel": produto.inflamavel or "",
             "cancerigeno": produto.cancerigeno or "",
             "ponto_fulgor": produto.ponto_fulgor or "",
@@ -4140,7 +4073,7 @@ def get(req, pid: int, erro: str = ""):
             Legend("Identificação"),
             Div(
                 ui.campo("Nome técnico", "nome_tecnico", valor=dados["nome_tecnico"]),
-                ui.campo("Fornecedor", "fornecedor", valor=dados["fornecedor"]),
+                ui.campo("Número CAS", "numero_cas", valor=dados["numero_cas"]),
                 cls="linha-form",
             ),
             Div(
@@ -4149,7 +4082,6 @@ def get(req, pid: int, erro: str = ""):
                          opcoes=TIPOS_PRODUTO),
                 ui.campo("Estado físico", "estado_fisico", valor=dados["estado_fisico"],
                          opcoes=ESTADOS_FISICOS),
-                ui.campo("Número CAS", "numero_cas", valor=dados["numero_cas"]),
                 cls="linha-form",
             ),
             ui.campo("Composição", "composicao", valor=dados["composicao"], linhas=2),
@@ -4167,10 +4099,10 @@ def get(req, pid: int, erro: str = ""):
             ui.campo("Necessidade de uso", "necessidade_uso",
                      valor=dados["necessidade_uso"], linhas=3,
                      ajuda="Por que o produto é necessário e o que ele resolve."),
-            ui.campo("Motivo do desenvolvimento", "motivo_desenvolvimento",
-                     valor=dados["motivo_desenvolvimento"], linhas=3,
-                     ajuda="O que originou a solicitação (projeto, melhoria, exigência)."),
             Div(
+                ui.campo("Forma de aplicação", "forma_aplicacao",
+                         valor=dados["forma_aplicacao"], opcoes=FORMAS_APLICACAO,
+                         ajuda="Como o produto é aplicado no processo."),
                 ui.campo("Área solicitante", "area_solicitante",
                          valor=dados["area_solicitante"], opcoes=AREAS_SOLICITANTES),
                 ui.campo("Prazo de utilização", "prazo_utilizacao",
@@ -4190,9 +4122,21 @@ def get(req, pid: int, erro: str = ""):
                          placeholder="Ex.: operador de laminação, analista de laboratório"),
                 cls="linha-form",
             ),
-            ui.campo("Solicitante terceiro", "solicitante_terceiro",
-                     valor=dados["solicitante_terceiro"],
-                     ajuda="Preencha apenas quando a solicitação vier de empresa terceira."),
+            Div(
+                ui.campo("Nome do solicitante terceiro", "terceiro_nome",
+                         valor=dados["terceiro_nome"],
+                         ajuda="Só quando a solicitação vem de empresa terceira."),
+                ui.campo("Empresa do terceiro", "terceiro_empresa",
+                         valor=dados["terceiro_empresa"]),
+                cls="linha-form",
+            ),
+            Div(
+                ui.campo("Gestor Tenaris do contrato", "gestor_contrato",
+                         valor=dados["gestor_contrato"]),
+                ui.campo("E-mail do gestor", "gestor_email", tipo="email",
+                         valor=dados["gestor_email"]),
+                cls="linha-form",
+            ),
             Div(
                 Span("Unidades autorizadas", cls="rot"),
                 Div(
@@ -4377,6 +4321,17 @@ async def post(req, pid: int):
             )
         parecer = f"[{motivo}] {parecer}"
     area = (form.get("area") or "").strip() or None
+    epis = [e for e in form.getlist("epis") if e in EPIS]
+    # Controle regulatório: só o Químico Responsável preenche.
+    orgao = (form.get("orgao_controlador") or "NAO").strip()
+    numero_licenca = (form.get("numero_licenca") or "").strip()
+    validade_licenca = _data(form.get("validade_licenca"))
+    if orgao in ORGAOS_CONTROLADORES and not numero_licenca:
+        return RedirectResponse(
+            _msg(f"/produtos/{pid}", "erro",
+                 "Produto controlado exige o número da licença do órgão escolhido."),
+            status_code=303,
+        )
     with db_session() as s:
         produto = s.get(Produto, pid)
         u = s.get(Usuario, usuario.id)
@@ -4394,70 +4349,20 @@ async def post(req, pid: int):
                 _msg(f"/produtos/{pid}", "erro", "Escolha por qual área está opinando."),
                 status_code=303,
             )
-        servicos.registrar_decisao(s, produto, u, decisao, parecer, area=area)
+        if area == "QUIMICO_RESPONSAVEL" and "orgao_controlador" in form:
+            servicos.aplicar_controles(
+                s, produto,
+                [{
+                    "orgao": orgao,
+                    "numero_licenca": numero_licenca or None,
+                    "validade_licenca": validade_licenca,
+                }] if orgao in ORGAOS_CONTROLADORES else [],
+            )
+        servicos.registrar_decisao(s, produto, u, decisao, parecer, area=area,
+                                   epis=epis if area == "SEGURANCA" else None)
         rotulo = dict(FLUXO_APROVACAO).get(area, area)
     return RedirectResponse(
         _msg(f"/produtos/{pid}", "ok", f"Parecer de {rotulo} registrado."),
-        status_code=303,
-    )
-
-
-@rt("/produtos/{pid}/correcao")
-async def post(req, pid: int):
-    """O aprovador devolve a solicitação ao solicitante, sem reprovar."""
-    barrado = exigir_login(req)
-    if barrado:
-        return barrado
-    usuario = eu(req)
-    form = await req.form()
-    motivo = (form.get("motivo") or "").strip()
-    if not motivo:
-        return RedirectResponse(
-            _msg(f"/produtos/{pid}", "erro", "Descreva o que precisa ser corrigido."),
-            status_code=303,
-        )
-    with db_session() as s:
-        produto = s.get(Produto, pid)
-        u = s.get(Usuario, usuario.id)
-        if not produto or not servicos.pode_decidir(s, u, produto):
-            return RedirectResponse(
-                _msg(f"/produtos/{pid}", "erro",
-                     "Você não responde por nenhuma área pendente desta solicitação."),
-                status_code=303,
-            )
-        servicos.solicitar_correcao(s, produto, u, motivo)
-    return RedirectResponse(
-        _msg(f"/produtos/{pid}", "ok", "Correção solicitada ao solicitante."),
-        status_code=303,
-    )
-
-
-@rt("/produtos/{pid}/reenviar")
-async def post(req, pid: int):
-    """O solicitante devolve a solicitação para análise após corrigir."""
-    barrado = exigir_login(req)
-    if barrado:
-        return barrado
-    usuario = eu(req)
-    form = await req.form()
-    resposta = (form.get("resposta") or "").strip()
-    if not resposta:
-        return RedirectResponse(
-            _msg(f"/produtos/{pid}", "erro", "Descreva o que foi corrigido."),
-            status_code=303,
-        )
-    with db_session() as s:
-        produto = s.get(Produto, pid)
-        u = s.get(Usuario, usuario.id)
-        if not produto or not servicos.pode_corrigir(u, produto):
-            return RedirectResponse(
-                _msg(f"/produtos/{pid}", "erro",
-                     "Somente o solicitante pode reenviar esta solicitação."),
-                status_code=303,
-            )
-        servicos.reenviar_apos_correcao(s, produto, u, resposta)
-    return RedirectResponse(
-        _msg(f"/produtos/{pid}", "ok", "Solicitação reenviada para análise."),
         status_code=303,
     )
 

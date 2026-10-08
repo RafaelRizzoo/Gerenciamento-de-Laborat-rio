@@ -189,74 +189,28 @@ def notificar_decisao(sessao, produto: Produto, etapa: str, decisao: str, parece
     notificar(sessao, produto.solicitante.email, assunto, corpo, produto.id)
 
 
-def notificar_correcao(sessao, produto: Produto, etapa: str, motivo: str):
-    """Avisa o solicitante de que a solicitação voltou para correção."""
-    rotulo = dict(FLUXO_APROVACAO).get(etapa, etapa)
-    assunto = (
-        f"[Produtos Químicos] Correção solicitada - {produto.nome_comercial}"
-    )
-    corpo = (
-        f"Olá {produto.solicitante.nome},\n\n"
-        f"A área de {rotulo} solicitou uma correção na solicitação do produto "
-        f"{produto.nome_comercial} ({produto.codigo_interno}) antes de dar o parecer.\n\n"
-        f"O que precisa ser corrigido:\n{motivo}\n\n"
-        f"A solicitação NÃO foi reprovada. Depois de corrigir, reenvie pelo sistema: "
-        f"a análise retoma com {rotulo}, e as etapas já aprovadas continuam valendo.\n\n"
-        f"Acesse: {_url_produto(produto)}\n\n"
-        f"-- {config.APP_EMPRESA} | {config.APP_NOME}"
-    )
-    notificar(sessao, produto.solicitante.email, assunto, corpo, produto.id)
-
-
-def notificar_reenvio(sessao, produto: Produto, resposta: str):
-    """Avisa as áreas que ainda faltam de que a correção foi reenviada."""
-    assunto = f"[Produtos Químicos] Correção reenviada - {produto.nome_comercial}"
-    pendentes = [a for a in produto.areas_pendentes if produto.aguarda(a)]
-    for area in pendentes:
-        rotulo = dict(FLUXO_APROVACAO).get(area, area)
-        for usuario in destinatarios_da_area(sessao, area):
-            corpo = (
-                f"Olá {usuario.nome},\n\n"
-                f"{produto.solicitante.nome} reenviou a solicitação do produto "
-                f"{produto.nome_comercial} ({produto.codigo_interno}) após a "
-                f"correção solicitada.\n\n"
-                f"Observação do solicitante: {resposta or '(sem observação)'}\n\n"
-                f"A análise de {rotulo} está liberada: {_url_produto(produto)}\n\n"
-                f"-- {config.APP_EMPRESA} | {config.APP_NOME}"
-            )
-            notificar(sessao, usuario.email, assunto, corpo, produto.id)
-
-
-def notificar_documento(sessao, produto: Produto, nome_arquivo: str, tipo_label: str):
-    """Avisa quem ainda precisa analisar que a documentação foi atualizada."""
-    pendentes = [a for a in produto.areas_pendentes if produto.aguarda(a)]
-    if not pendentes:
-        return
-    assunto = f"[Produtos Químicos] Documentação atualizada - {produto.nome_comercial}"
-    for area in pendentes:
-        rotulo = dict(FLUXO_APROVACAO).get(area, area)
-        for usuario in destinatarios_da_area(sessao, area):
-            corpo = (
-                f"Olá {usuario.nome},\n\n"
-                f"Um novo documento foi anexado à solicitação do produto "
-                f"{produto.nome_comercial} ({produto.codigo_interno}), que "
-                f"aguarda o parecer de {rotulo}.\n\n"
-                f"Documento: {tipo_label} - {nome_arquivo}\n\n"
-                f"Consulte antes de dar o parecer: {_url_produto(produto)}\n\n"
-                f"-- {config.APP_EMPRESA} | {config.APP_NOME}"
-            )
-            notificar(sessao, usuario.email, assunto, corpo, produto.id)
-
-
 def notificar_conclusao(sessao, produto: Produto):
-    """Avisa o solicitante que o fluxo terminou."""
+    """Avisa o solicitante que o fluxo terminou.
+
+    Num produto aprovado o aviso carrega o EPI obrigatório definido pela área
+    de Segurança: é a informação que quem vai manusear precisa ter em mãos.
+    """
     assunto = (
         f"[Produtos Químicos] Produto {produto.status_label.upper()} - {produto.nome_comercial}"
     )
+    epis = produto.epis_nomes
+    bloco_epi = ""
+    if produto.status == "APROVADO" and epis:
+        itens = "\n".join(f"  - {e}" for e in epis)
+        bloco_epi = (
+            "EPI OBRIGATÓRIO (definido pela área de Segurança):\n"
+            f"{itens}\n\n"
+        )
     corpo = (
         f"Olá {produto.solicitante.nome},\n\n"
         f"O fluxo de aprovação do produto {produto.nome_comercial} "
         f"({produto.codigo_interno}) foi concluído com a situação: {produto.status_label}.\n\n"
+        f"{bloco_epi}"
         f"Detalhes e pareceres: {_url_produto(produto)}\n\n"
         f"-- {config.APP_EMPRESA} | {config.APP_NOME}"
     )

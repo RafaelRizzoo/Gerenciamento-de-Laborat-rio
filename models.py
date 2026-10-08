@@ -153,7 +153,6 @@ UNIDADES_CONSUMO = [
 FABRICAS = [
     "Pinda Tubos",
     "MC SCON2",
-    "MC TCHB",
     "COSE",
     "RDO",
 ]
@@ -179,6 +178,37 @@ AREAS_SOLICITANTES = [
 ]
 
 # Classes de risco (um produto pode acumular várias).
+# Como o produto é aplicado na planta. Padronizado para dar para filtrar
+# depois ("me mostre tudo o que é aplicado por pulverização").
+FORMAS_APLICACAO = [
+    "Manual (pincel, pano, rolo)",
+    "Pulverização / spray",
+    "Imersão",
+    "Dosagem automática",
+    "Circulação em sistema fechado",
+    "Mistura em tanque",
+    "Aplicação por terceiro",
+    "Outros",
+]
+
+# EPIs que o aprovador de Segurança marca no parecer, conforme a seção 8 da
+# FDS. Para incluir ou tirar um item, basta editar esta lista.
+EPIS = [
+    "Óculos de segurança",
+    "Protetor facial",
+    "Luva de segurança química",
+    "Luva de raspa / vaqueta",
+    "Respirador semifacial com filtro químico",
+    "Respirador facial inteiro",
+    "Máscara PFF2",
+    "Avental de PVC",
+    "Avental de raspa",
+    "Macacão / vestimenta de proteção",
+    "Bota de segurança impermeável",
+    "Protetor auricular",
+    "Creme de proteção para as mãos",
+]
+
 CLASSES_RISCO = [
     "Inflamável",
     "Corrosivo",
@@ -276,13 +306,19 @@ class Produto(Base):
     prazo_utilizacao: Mapped[str | None] = mapped_column(Unicode(80), nullable=True)
     aplicacao: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
     # Por que a planta precisa deste produto (pergunta pedida pela Tenaris).
+    forma_aplicacao: Mapped[str | None] = mapped_column(Unicode(60), nullable=True)
     necessidade_uso: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
     motivo_desenvolvimento: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
     # Exposição dos colaboradores - usado por Saúde e Segurança na análise.
     funcionarios_expostos: Mapped[int | None] = mapped_column(Integer, nullable=True)
     funcoes_expostas: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
-    # Quem pediu, quando a solicitação vem de empresa terceira.
+    # Quem pediu, quando a solicitação vem de empresa terceira. O gestor é
+    # a pessoa da Tenaris que responde pelo contrato dessa empresa.
     solicitante_terceiro: Mapped[str | None] = mapped_column(Unicode(160), nullable=True)
+    terceiro_nome: Mapped[str | None] = mapped_column(Unicode(160), nullable=True)
+    terceiro_empresa: Mapped[str | None] = mapped_column(Unicode(160), nullable=True)
+    gestor_contrato: Mapped[str | None] = mapped_column(Unicode(160), nullable=True)
+    gestor_email: Mapped[str | None] = mapped_column(Unicode(180), nullable=True)
     processo: Mapped[str | None] = mapped_column(Unicode(180), nullable=True)
     consumo_estimado: Mapped[str | None] = mapped_column(Unicode(60), nullable=True)
     unidade: Mapped[str | None] = mapped_column(Unicode(20), nullable=True)
@@ -342,6 +378,12 @@ class Produto(Base):
         back_populates="produto",
         cascade="all, delete-orphan",
         order_by="ProdutoRisco.classe",
+        lazy="selectin",
+    )
+    epis: Mapped[list["ProdutoEPI"]] = relationship(
+        back_populates="produto",
+        cascade="all, delete-orphan",
+        order_by="ProdutoEPI.id",
         lazy="selectin",
     )
 
@@ -427,6 +469,17 @@ class Produto(Base):
     @property
     def riscos_nomes(self) -> list[str]:
         return [r.classe for r in self.riscos]
+
+    @property
+    def epis_nomes(self) -> list[str]:
+        """EPIs que a área de Segurança marcou como obrigatórios."""
+        return [e.epi for e in self.epis]
+
+    @property
+    def terceiro_label(self) -> str | None:
+        """Solicitante terceiro em uma linha, para a ficha e os e-mails."""
+        partes = [p for p in (self.terceiro_nome, self.terceiro_empresa) if p]
+        return " - ".join(partes) or self.solicitante_terceiro or None
 
     # ------------------------------------------------- Controle regulatório
     @property
@@ -528,6 +581,25 @@ class ProdutoRisco(Base):
     classe: Mapped[str] = mapped_column(Unicode(60), nullable=False)
 
     produto: Mapped["Produto"] = relationship(back_populates="riscos")
+
+
+class ProdutoEPI(Base):
+    """EPI que a área de Segurança marcou como obrigatório para o produto.
+
+    Diferente de `epi_recomendado`, que é o texto copiado da FDS: aqui é a
+    decisão do técnico de Segurança, tomada ao dar o parecer.
+    """
+
+    __tablename__ = "produto_epis"
+    __table_args__ = (
+        UniqueConstraint("produto_id", "epi", name="uq_produto_epi"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    produto_id: Mapped[int] = mapped_column(ForeignKey("produtos.id"), nullable=False)
+    epi: Mapped[str] = mapped_column(Unicode(80), nullable=False)
+
+    produto: Mapped["Produto"] = relationship(back_populates="epis")
 
 
 class ControleOrgao(Base):

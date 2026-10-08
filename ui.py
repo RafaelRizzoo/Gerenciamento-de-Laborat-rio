@@ -10,6 +10,7 @@ Regras de navegacao adotadas:
 from fasthtml.common import *  # noqa: F403
 
 import config
+import idiomas
 from models import AREAS_APROVACAO, ETAPA_FINAL, FLUXO_APROVACAO, STATUS
 
 
@@ -55,7 +56,7 @@ def cabeca(titulo: str):
 
 # ------------------------------------------------------------- Estrutura
 def topbar():
-    """Barra superior: somente a marca e o nome do sistema. Nada mais."""
+    """Barra superior: a marca, o nome do sistema e a escolha de idioma."""
     return Header(
         A(
             marca_tenaris(),
@@ -64,6 +65,7 @@ def topbar():
             href="/",
             cls="marca",
         ),
+        idiomas.seletor(),
         cls="topbar",
     )
 
@@ -130,23 +132,27 @@ def pagina(
         Div(*barra_acoes, cls="acoes") if barra_acoes else None,
         cls="cabecalho-pagina",
     )
-    return (
-        *cabeca(titulo),
-        topbar(),
-        faixa_usuario(usuario),
-        Main(cabecalho, *conteudo, cls=f"conteudo {largura}"),
-        rodape(),
+    return idiomas.traduzir(
+        (
+            *cabeca(titulo),
+            topbar(),
+            faixa_usuario(usuario),
+            Main(cabecalho, *conteudo, cls=f"conteudo {largura}"),
+            rodape(),
+        )
     )
 
 
 def molde_simples(titulo: str, *conteudo, usuario=None):
     """Molde sem cabecalho de pagina (usado pela home e pelo login)."""
-    return (
-        *cabeca(titulo),
-        topbar(),
-        faixa_usuario(usuario),
-        Main(*conteudo, cls="conteudo aberto"),
-        rodape(),
+    return idiomas.traduzir(
+        (
+            *cabeca(titulo),
+            topbar(),
+            faixa_usuario(usuario),
+            Main(*conteudo, cls="conteudo aberto"),
+            rodape(),
+        )
     )
 
 

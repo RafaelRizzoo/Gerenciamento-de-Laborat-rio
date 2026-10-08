@@ -429,6 +429,48 @@ fieldset.secao > legend {
   text-transform: none; letter-spacing: 0;
 }
 
+/* --------------------------------------------- Seletor de idioma (PT/EN/ES) */
+.seletor-idioma {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  font-size: .82rem;
+  letter-spacing: .04em;
+}
+.seletor-idioma .idioma {
+  color: var(--cinza-escuro);
+  text-decoration: none;
+  padding: .2rem .4rem;
+  border-radius: 5px;
+  font-weight: 600;
+}
+.seletor-idioma .idioma:hover {
+  background: var(--cinza-fundo);
+  text-decoration: none;
+}
+.seletor-idioma .idioma.ativo {
+  color: var(--verde);
+  background: var(--verde-suave);
+}
+.seletor-idioma .sep-idioma { color: var(--cinza-claro); }
+
+/* Dentro da caixa de login o topo é azul: inverte as cores. */
+.login-caixa .topo .seletor-idioma {
+  margin: .7rem 0 0; display: flex; justify-content: flex-start;
+}
+.login-caixa .topo .seletor-idioma .idioma { color: var(--branco); opacity: .75; }
+.login-caixa .topo .seletor-idioma .idioma:hover { background: rgba(255,255,255,.16); opacity: 1; }
+.login-caixa .topo .seletor-idioma .idioma.ativo {
+  color: var(--branco); background: rgba(255,255,255,.22); opacity: 1;
+}
+.login-caixa .topo .seletor-idioma .sep-idioma { color: rgba(255,255,255,.45); font-size: .8rem; }
+
+@media (max-width: 560px) {
+  .seletor-idioma { font-size: .74rem; gap: .2rem; }
+  .seletor-idioma .idioma { padding: .18rem .28rem; }
+}
+
 .marca-tenaris { display: inline-flex; align-items: center; }
 .marca-tenaris .marca-img {
   display: block; flex: 0 0 auto;
@@ -929,7 +971,7 @@ tr.minha-etapa > td:first-child { box-shadow: inset 3px 0 0 var(--azul); }
 /* ------------------------------------------------ Indicadores da home */
 .painel-inicio {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: .9rem; margin: 1.4rem 0 .4rem;
+  gap: .9rem; margin: 0 0 1.5rem;
 }
 .kpi-inicio {
   background: var(--branco); border: 1px solid var(--cinza-claro);
@@ -1085,4 +1127,12 @@ button.tirar:hover { text-decoration: underline; }
 .card.destaque-senha .senha-nova {
   font-size: 1.25rem; font-weight: 700; letter-spacing: .06em;
   color: var(--azul);
+}
+
+/* ------------------------------------------------- EPI obrigatorio */
+.card.destaque-epi { border-left: 4px solid var(--verde); }
+.lista-epi { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .7rem; }
+.chip.epi {
+  background: #e8f6ee; color: #11704a; border: 1px solid #bfe3d0;
+  border-radius: 999px; padding: .22rem .62rem; font-size: .78rem; font-weight: 600;
 }

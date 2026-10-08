@@ -38,7 +38,6 @@ EXEMPLOS = [
         "_solicitante": ("Ana Silva", "ana.silva@tenaris.com"),
         "nome_comercial": "Coagulante Suall Nanocog 220E",
         "fabricante": "SUALL Indústria e Comércio Ltda",
-        "fornecedor": "SUALL Indústria e Comércio Ltda",
         "numero_cas": "7446-70-0",
         "nome_tecnico": "Cloreto de alumínio em solução",
         "tipo_produto": "Outros",
@@ -50,10 +49,7 @@ EXEMPLOS = [
             "turbidez exigido na licença de operação, e a água de processo não "
             "pode ser reaproveitada no circuito de resfriamento."
         ),
-        "motivo_desenvolvimento": (
-            "Condicionante da renovação da licença ambiental: reduzir sólidos "
-            "suspensos no efluente final em 40% até o fim do ano."
-        ),
+        "forma_aplicacao": "Dosagem automática",
         "area_solicitante": "Produção",
         "setor_solicitante": "Produção",
         "prazo_utilizacao": "Uso contínuo (sem prazo definido)",
@@ -87,7 +83,6 @@ EXEMPLOS = [
         "_solicitante": ("Julia Silva", "jusilva@tenaris.com"),
         "nome_comercial": "Qualypav Demarcação Branco e Cores",
         "fabricante": "Qualycril Soluções para a Construção Civil Ltda",
-        "fornecedor": "Distribuidora Vale Tintas",
         "numero_cas": "108-88-3",
         "nome_tecnico": "Tinta acrílica para demarcação viária",
         "tipo_produto": "Outros",
@@ -98,10 +93,7 @@ EXEMPLOS = [
             "Repintura da sinalização de piso das rotas de pedestres e do "
             "trânsito de empilhadeiras, hoje apagada em boa parte da nave 3."
         ),
-        "motivo_desenvolvimento": (
-            "Plano de segurança viária interna revisado em 2026, que passou a "
-            "exigir faixa de pedestre demarcada em toda a área de movimentação."
-        ),
+        "forma_aplicacao": "Pulverização / spray",
         "area_solicitante": "Manutenção",
         "setor_solicitante": "Manutenção",
         "prazo_utilizacao": "Até 6 meses",
@@ -138,7 +130,6 @@ EXEMPLOS = [
         "_solicitante": ("Ana Silva", "ana.silva@tenaris.com"),
         "nome_comercial": "Ratol Granulado GS - Profissional",
         "fabricante": "ChemoNE - Industrial Química do Nordeste EIRELI",
-        "fornecedor": "Sanivet Controle de Pragas Ltda",
         "numero_cas": "56073-10-0",
         "nome_tecnico": "Isca rodenticida granulada",
         "tipo_produto": "Outros",
@@ -149,10 +140,7 @@ EXEMPLOS = [
             "Controle de roedores no almoxarifado e nas galerias de cabos, onde "
             "houve dano a isolamento elétrico no último trimestre."
         ),
-        "motivo_desenvolvimento": (
-            "Programa de controle integrado de pragas exigido pela auditoria de "
-            "segurança de alimentos do refeitório."
-        ),
+        "forma_aplicacao": "Aplicação por terceiro",
         "area_solicitante": "Manutenção",
         "setor_solicitante": "Manutenção",
         "prazo_utilizacao": "De 6 a 12 meses",
@@ -172,8 +160,11 @@ EXEMPLOS = [
             "a pessoas e animais. Registrar cada ponto no mapa de iscas."
         ),
         "observacoes": "Aplicação por empresa terceira certificada, acompanhada pela Manutenção.",
-        "solicitante_terceiro": "Sanivet Controle de Pragas Ltda - Marcos Andrade",
-        "fabricas": ["MC TCHB"],
+        "terceiro_nome": "Marcos Andrade",
+        "terceiro_empresa": "Sanivet Controle de Pragas Ltda",
+        "gestor_contrato": "Eduardo Lima",
+        "gestor_email": "eduardo.lima@tenaris.com",
+        "fabricas": ["COSE"],
         "riscos": ["Nocivo"],
         "_revisao": date(2024, 12, 21),
     },
