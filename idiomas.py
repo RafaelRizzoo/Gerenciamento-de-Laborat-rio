@@ -217,6 +217,20 @@ EXTRAS = {
     "reprovado": {"en": "rejected", "es": "rechazado"},
     "aguardando": {"en": "waiting", "es": "en espera"},
     "não iniciada": {"en": "not started", "es": "no iniciada"},
+    "Você administra o sistema, mas o parecer de cada área é exclusivo de "
+    "quem responde por ela. Para opinar, é preciso estar cadastrado como "
+    "aprovador da área em Aprovações.": {
+        "en": "You administer the system, but each area's opinion belongs "
+              "only to whoever answers for it. To submit one, you must be "
+              "registered as an approver for that area under Approvals.",
+        "es": "Usted administra el sistema, pero el dictamen de cada área es "
+              "exclusivo de quien responde por ella. Para opinar, hay que "
+              "estar registrado como aprobador del área en Aprobaciones.",
+    },
+    "Você não responde pela área escolhida nesta solicitação.": {
+        "en": "You do not answer for the area you selected on this request.",
+        "es": "Usted no responde por el área seleccionada en esta solicitud.",
+    },
     "FDS": {"en": "SDS", "es": "FDS"},
     "login": {"en": "login", "es": "acceso"},
     "Produto": {"en": "Product", "es": "Producto"},

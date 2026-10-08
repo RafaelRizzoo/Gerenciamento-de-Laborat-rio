@@ -3983,6 +3983,25 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
         )
         if form_decisao is not None and not publico
         else None,
+        # Aviso só para o administrador: sem isso ele procura um botão de
+        # aprovar que, de propósito, não existe mais para o cargo dele.
+        Div(
+            P(
+                "Você administra o sistema, mas o parecer de cada área é "
+                "exclusivo de quem responde por ela. Para opinar, é preciso "
+                "estar cadastrado como aprovador da área em Aprovações.",
+                cls="texto-mudo pequeno",
+            ),
+            cls="card",
+        )
+        if (
+            not publico
+            and form_decisao is None
+            and produto.aberta
+            and usuario is not None
+            and usuario.papel == "ADMIN"
+        )
+        else None,
         *[Div(Div(H2("Situação do produto"), cls="card-titulo"), a, cls="card") for a in acoes_status],
     )
 
@@ -4342,11 +4361,23 @@ async def post(req, pid: int):
                      "Você não responde por nenhuma área pendente desta solicitação."),
                 status_code=303,
             )
-        if area not in permitidas:
-            area = permitidas[0] if len(permitidas) == 1 else None
+        # Área vazia (formulário antigo, ou quem responde por uma só) assume
+        # a única área possível. Já uma área PREENCHIDA que não é dele é
+        # recusada, nunca trocada em silêncio pela dele: o parecer tem de
+        # ficar registrado na área que a pessoa de fato assinou.
         if area is None:
+            if len(permitidas) == 1:
+                area = permitidas[0]
+            else:
+                return RedirectResponse(
+                    _msg(f"/produtos/{pid}", "erro",
+                         "Escolha por qual área está opinando."),
+                    status_code=303,
+                )
+        elif area not in permitidas:
             return RedirectResponse(
-                _msg(f"/produtos/{pid}", "erro", "Escolha por qual área está opinando."),
+                _msg(f"/produtos/{pid}", "erro",
+                     "Você não responde pela área escolhida nesta solicitação."),
                 status_code=303,
             )
         if area == "QUIMICO_RESPONSAVEL" and "orgao_controlador" in form:

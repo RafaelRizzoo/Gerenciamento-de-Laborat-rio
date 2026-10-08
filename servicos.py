@@ -323,12 +323,19 @@ def areas_do_usuario(sessao, usuario: Usuario) -> list[str]:
 
     Vem da tabela de aprovadores (mantida na tela de Aprovações). O papel
     do cadastro continua valendo como atalho, para não quebrar bases
-    antigas. O ADMIN responde por qualquer área.
+    antigas.
+
+    O parecer de cada área é exclusivo de quem responde por ela: ninguém
+    opina pela área de outro. **O administrador não é exceção** - ele
+    administra o sistema, mas só assina parecer se estiver cadastrado como
+    aprovador daquela área, como qualquer outro. Sem isso, o cargo de
+    administrador seria um jeito de dar parecer químico sem ser o químico.
+
+    Para quem administra os aprovadores, veja `areas_gerenciaveis()`, que é
+    outra pergunta: "quem pode mexer na lista de aprovadores desta área?".
     """
     if not usuario:
         return []
-    if usuario.papel == "ADMIN":
-        return [chave for chave, _ in FLUXO_APROVACAO]
     areas = set(
         sessao.scalars(
             select(AreaAprovador.area).where(

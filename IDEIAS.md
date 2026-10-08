@@ -7,7 +7,25 @@ decisão já tomada (quando houve) e o que precisa mudar no código.
 
 ## 1. Parecer restrito ao técnico da área
 
-**Status:** decidido, falta implementar.
+**Status: FEITO.** Implementado em 08/10/2026. O registro abaixo fica como
+histórico da decisão e do que foi mexido.
+
+O que mudou no código:
+
+- `servicos.areas_do_usuario()` — removido o atalho que dava todas as áreas
+  ao ADMIN. O administrador só assina parecer se estiver cadastrado como
+  aprovador da área.
+- `servicos.areas_gerenciaveis()` — **não** mudou: ADMIN e Aprovador Final
+  continuam cuidando da lista de aprovadores de todas as áreas.
+- `main.py`, POST `/produtos/{id}/decisao` — uma área preenchida que não é
+  do usuário passa a ser **recusada**. Antes era trocada em silêncio pela
+  área dele, o que gravava o parecer na área errada.
+- `main.py`, ficha do produto — aviso para o administrador explicando por
+  que não existe botão de parecer para o cargo dele.
+
+Ainda pendente, mas é cadastro e não código: **cadastrar um suplente em cada
+área**. Hoje cada área tem um nome só e, com o administrador sem poder
+destravar, a área para quando o titular sai de férias.
 **Pedido da Julia:** "não permitir que qualquer colaborador dê um parecer
 químico — o parecer de cada área deve ser exclusivo do login do técnico
 daquela área."
