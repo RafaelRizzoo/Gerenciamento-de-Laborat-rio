@@ -149,11 +149,18 @@ UNIDADES_CONSUMO = [
 # Módulo de consulta de FDS
 # ---------------------------------------------------------------------
 
-# Unidades / instalações onde um produto pode ser autorizado.
-FABRICAS = [
-    "Pinda Tubos",
-    "MC SCON2",
-    "COSE",
+# Unidades físicas da Tenaris onde um produto pode ser autorizado.
+#
+# Antes esta lista se chamava FABRICAS e misturava unidade com área: "COSE"
+# e "MC SCON2" são áreas, não unidades. A conversão dos cadastros antigos
+# está em migrar_fluxo.py.
+#
+# As colunas do banco continuam se chamando `fabrica` - renomear coluna em
+# SQLite dá trabalho e não muda nada para quem usa. O que a pessoa lê na
+# tela é "Unidade".
+UNIDADES = [
+    "Pinda",
+    "MC",
     "RDO",
 ]
 
@@ -167,15 +174,59 @@ TIPOS_PRODUTO = [
     "Outros",
 ]
 
-# Área da planta responsável pela utilização do produto.
-AREAS_SOLICITANTES = [
-    "Produção",
-    "Manutenção",
-    "Laboratório",
-    "Engenharia",
-    "Qualidade",
-    "HSE",
-]
+# Área da planta responsável pela utilização do produto, dentro de cada
+# unidade. "Qualidade" e "SUCH" existem em mais de uma unidade, por isso a
+# área sozinha não identifica o lugar: o par unidade + área é que vale.
+AREAS_POR_UNIDADE: dict[str, list[str]] = {
+    "Pinda": [
+        "Fábrica 4",
+        "Manutenção F4",
+        "Rev 6 - Externo",
+        "Rev 10 - Interno",
+        "Rev Concreto",
+        "Rev 4",
+        "Rev PPS",
+        "Manutenção Rev",
+        "MAOG - SCON",
+        "MAOG - RCON",
+        "MAOG - F1 - ERW",
+        "MAOG - F6",
+        "COSE",
+        "COSE 4º Processo",
+        "Manutenção MAOG",
+        "SUCH",
+        "Manutenção - Almoxarifado",
+        "Manutenção - Oficina",
+        "Manutenção - Oficina de veículos",
+        "Manutenção - ETE",
+        "Qualidade",
+        "Restaurante e Limpeza",
+    ],
+    "MC": [
+        "SCON 2",
+        "Qualidade",
+        "TCHB",
+        "SUCH",
+    ],
+    "RDO": [
+        "Rio das Ostras",
+    ],
+}
+
+# Lista achatada, sem repetição, para validar e para filtrar.
+AREAS_SOLICITANTES = list(
+    dict.fromkeys(a for areas in AREAS_POR_UNIDADE.values() for a in areas)
+)
+
+
+def areas_da_unidade(unidade: str | None) -> list[str]:
+    """Áreas válidas de uma unidade. Unidade desconhecida devolve lista vazia."""
+    return list(AREAS_POR_UNIDADE.get(unidade or "", []))
+
+
+def par_valido(unidade: str | None, area: str | None) -> bool:
+    """A área pertence mesmo a essa unidade?"""
+    return bool(area) and area in AREAS_POR_UNIDADE.get(unidade or "", [])
 
 # Classes de risco (um produto pode acumular várias).
 # Como o produto é aplicado na planta. Padronizado para dar para filtrar

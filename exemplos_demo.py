@@ -50,7 +50,7 @@ EXEMPLOS = [
             "pode ser reaproveitada no circuito de resfriamento."
         ),
         "forma_aplicacao": "Dosagem automática",
-        "area_solicitante": "Produção",
+        "area_solicitante": "Manutenção - ETE",
         "setor_solicitante": "Produção",
         "prazo_utilizacao": "Uso contínuo (sem prazo definido)",
         "consumo_estimado": "800",
@@ -72,7 +72,7 @@ EXEMPLOS = [
             "Substitui o coagulante anterior, de maior consumo por metro cúbico "
             "tratado. Dosagem definida em ensaio de bancada pelo laboratório."
         ),
-        "fabricas": ["COSE"],
+        "fabricas": ["Pinda"],
         "riscos": ["Corrosivo", "Irritante"],
         "_revisao": date(2025, 7, 3),
     },
@@ -94,7 +94,7 @@ EXEMPLOS = [
             "trânsito de empilhadeiras, hoje apagada em boa parte da nave 3."
         ),
         "forma_aplicacao": "Pulverização / spray",
-        "area_solicitante": "Manutenção",
+        "area_solicitante": "Manutenção - Oficina",
         "setor_solicitante": "Manutenção",
         "prazo_utilizacao": "Até 6 meses",
         "consumo_estimado": "200",
@@ -119,7 +119,7 @@ EXEMPLOS = [
             "Aplicação externa, com exaustão natural. Substitui a tinta anterior "
             "à base de solvente clorado."
         ),
-        "fabricas": ["Pinda Tubos"],
+        "fabricas": ["Pinda"],
         "riscos": ["Inflamável", "Irritante", "Nocivo", "Perigoso ao Meio Ambiente"],
         "_revisao": date(2025, 5, 27),
     },
@@ -141,7 +141,7 @@ EXEMPLOS = [
             "houve dano a isolamento elétrico no último trimestre."
         ),
         "forma_aplicacao": "Aplicação por terceiro",
-        "area_solicitante": "Manutenção",
+        "area_solicitante": "Manutenção - Almoxarifado",
         "setor_solicitante": "Manutenção",
         "prazo_utilizacao": "De 6 a 12 meses",
         "consumo_estimado": "5",
@@ -164,7 +164,7 @@ EXEMPLOS = [
         "terceiro_empresa": "Sanivet Controle de Pragas Ltda",
         "gestor_contrato": "Eduardo Lima",
         "gestor_email": "eduardo.lima@tenaris.com",
-        "fabricas": ["COSE"],
+        "fabricas": ["Pinda"],
         "riscos": ["Nocivo"],
         "_revisao": date(2024, 12, 21),
     },

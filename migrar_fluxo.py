@@ -6,6 +6,8 @@ O que mudou:
     fixo, e entra depois das demais.
   * Quem aprova cada área passou a ficar na tabela `area_aprovadores`,
     editável na tela de Aprovações.
+  * "Fábrica" virou "Unidade", e a lista antiga, que misturava unidade com
+    área, foi separada: COSE e MC SCON2 eram áreas, não unidades.
 
 Este script ajusta os dados já cadastrados. Pode ser rodado mais de uma
 vez sem efeito colateral.
@@ -18,7 +20,74 @@ from sqlalchemy import select
 
 import servicos
 from database import criar_tabelas, db_session
-from models import AREAS_APROVACAO, ETAPA_FINAL, Aprovacao, Produto, Usuario
+from models import (
+    AREAS_APROVACAO,
+    ETAPA_FINAL,
+    UNIDADES,
+    Aprovacao,
+    PontoColetaKit,
+    Produto,
+    ProdutoFabrica,
+    Usuario,
+)
+
+# De "fábrica" para "unidade".
+#
+# A lista antiga misturava os dois conceitos: "COSE" e "MC SCON2" são áreas
+# dentro de uma unidade, não unidades. Aqui cada valor antigo vai para a
+# unidade a que pertence de fato.
+UNIDADE_ANTIGA = {
+    "Pinda Tubos": "Pinda",
+    "COSE": "Pinda",
+    "MC SCON2": "MC",
+    "MC TCHB": "MC",
+    "RDO": "RDO",
+}
+
+
+def _converter_unidades(s) -> None:
+    """Troca os nomes antigos de fábrica pelos nomes de unidade."""
+    # Produtos. Um produto autorizado em "Pinda Tubos" E em "COSE" viraria
+    # dois registros "Pinda" iguais, o que a chave única não aceita: o
+    # segundo é descartado.
+    vistos: set[tuple[int, str]] = set()
+    trocados = descartados = 0
+    for vinculo in list(s.scalars(select(ProdutoFabrica).order_by(ProdutoFabrica.id))):
+        nova = UNIDADE_ANTIGA.get(vinculo.fabrica, vinculo.fabrica)
+        chave = (vinculo.produto_id, nova)
+        if chave in vistos:
+            s.delete(vinculo)
+            descartados += 1
+            continue
+        vistos.add(chave)
+        if nova != vinculo.fabrica:
+            vinculo.fabrica = nova
+            trocados += 1
+    s.flush()
+    if trocados:
+        print(f"{trocados} vínculo(s) de produto convertidos para a unidade nova.")
+    if descartados:
+        print(f"{descartados} vínculo(s) repetidos removidos após a conversão.")
+
+    # Pontos de coleta dos kits ambientais.
+    pontos = 0
+    for ponto in s.scalars(select(PontoColetaKit)):
+        nova = UNIDADE_ANTIGA.get(ponto.fabrica, ponto.fabrica)
+        if nova != ponto.fabrica:
+            ponto.fabrica = nova
+            pontos += 1
+    s.flush()
+    if pontos:
+        print(f"{pontos} ponto(s) de coleta convertidos para a unidade nova.")
+
+    fora = sorted(
+        {v.fabrica for v in s.scalars(select(ProdutoFabrica))
+         if v.fabrica not in UNIDADES}
+        | {p.fabrica for p in s.scalars(select(PontoColetaKit))
+           if p.fabrica not in UNIDADES}
+    )
+    if fora:
+        print("  [AVISO] unidades fora da lista nova, revise na mão: " + ", ".join(fora))
 
 
 def executar() -> None:
@@ -102,6 +171,9 @@ def executar() -> None:
         s.flush()
         if ajustados:
             print(f"{ajustados} solicitação(ões) tiveram a etapa recalculada.")
+
+        # 6) fábrica -> unidade ------------------------------------------
+        _converter_unidades(s)
 
     print("\nMigração concluída.")
     print("Confira em Aprovações > Aprovadores por área quem responde por cada uma.")

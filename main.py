@@ -26,6 +26,7 @@ import ui
 from database import criar_tabelas, db_session, descricao_conexao
 from models import (
     AREAS_APROVACAO,
+    AREAS_POR_UNIDADE,
     AREAS_SOLICITANTES,
     CATEGORIAS,
     CLASSES_RISCO,
@@ -33,7 +34,7 @@ from models import (
     ESTADOS_FISICOS,
     PRAZOS_UTILIZACAO,
     ETAPA_FINAL,
-    FABRICAS,
+    UNIDADES,
     FDS_ALERTA_MESES,
     FDS_VALIDADE_ANOS,
     FLUXO_APROVACAO,
@@ -66,6 +67,7 @@ from models import (
     Recurso,
     RecursoArquivo,
     Usuario,
+    par_valido,
 )
 from security import gerar_hash, verificar_senha
 
@@ -908,11 +910,12 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
             Div(
                 ui.campo("Unidade solicitante", "unidade_solicitante",
                          valor=dados.get("unidade_solicitante", ""),
-                         opcoes=FABRICAS, obrigatório=True,
+                         opcoes=UNIDADES, obrigatório=True,
                          ajuda="Onde o produto será utilizado."),
                 ui.campo("Área solicitante", "area_solicitante",
                          valor=dados.get("area_solicitante", ""),
-                         opcoes=AREAS_SOLICITANTES, obrigatório=True),
+                         grupos=AREAS_POR_UNIDADE, obrigatório=True,
+                         ajuda="Escolha uma área da unidade selecionada ao lado."),
                 cls="linha-form",
             ),
             ui.campo(
@@ -1152,7 +1155,7 @@ async def post(req, sess):
             ("solicitante_email", "Seu e-mail corporativo"),
         ] + obrigatorios
     faltando = [rotulo for campo, rotulo in obrigatorios if not dados.get(campo)]
-    if unidade_solicitante not in FABRICAS:
+    if unidade_solicitante not in UNIDADES:
         faltando.append("Unidade solicitante")
     if not riscos:
         faltando.append("Classe de risco")
@@ -1170,6 +1173,15 @@ async def post(req, sess):
         faltando.append("Forma de aplicação")
     if faltando:
         return voltar("Preencha os campos obrigatórios: " + ", ".join(dict.fromkeys(faltando)) + ".")
+
+    # A área tem de ser de fato da unidade escolhida: "Qualidade" existe em
+    # Pinda e no MC, "TCHB" só no MC. Sem esta conferência o cadastro aceita
+    # um par que não existe na planta.
+    if not par_valido(unidade_solicitante, dados.get("area_solicitante")):
+        return voltar(
+            f"A área \"{dados.get('area_solicitante')}\" não é da unidade "
+            f"{unidade_solicitante}. Escolha uma área da unidade selecionada."
+        )
 
     # Solicitante terceiro é opcional, mas pela metade não serve: se a
     # solicitação vem de uma empresa terceira, precisamos saber de quem é a
@@ -1411,7 +1423,7 @@ def _gaveta_novo_aprovador(areas_geridas: list):
                 ui.campo("E-mail corporativo", "email", tipo="email", obrigatório=True,
                          placeholder="nome.sobrenome@tenaris.com",
                          ajuda="É por ele que a pessoa entra no sistema."),
-                ui.campo("Unidade", "setor", opcoes=FABRICAS,
+                ui.campo("Unidade", "setor", opcoes=UNIDADES,
                          ajuda="Opcional - só para saber de qual planta ela é."),
                 Div(
                     Button("Salvar", cls="btn verde", type="submit"),
@@ -1550,7 +1562,7 @@ def get(req, sess, status: str = "", fabrica: str = "",
                      opcoes=[(k, STATUS[k]) for k in
                              ("PENDENTE", "EM_ANALISE",
                               "APROVADO", "REPROVADO")]),
-            ui.campo("Unidade", "fabrica", valor=fabrica, opcoes=FABRICAS),
+            ui.campo("Unidade", "fabrica", valor=fabrica, opcoes=UNIDADES),
             ui.campo("Data inicial", "de", tipo="date", valor=de),
             ui.campo("Data final", "ate", tipo="date", valor=ate),
             Div(
@@ -2017,7 +2029,7 @@ def get(req, fabrica: str = "", ok: str = "", erro: str = ""):
 
     filtro = Form(
         Div(
-            ui.campo("Fábrica", "fabrica", valor=fabrica, opcoes=FABRICAS),
+            ui.campo("Unidade", "fabrica", valor=fabrica, opcoes=UNIDADES),
             Div(
                 Button("Filtrar", cls="btn", type="submit"),
                 A("Limpar", href="/kit-ambiental", cls="btn secundario"),
@@ -2249,7 +2261,7 @@ def get(req, kid: int, editar: str = "", ok: str = "", erro: str = ""):
             Div(H2("Adicionar ponto de coleta"), cls="card-titulo"),
             Form(
                 Div(
-                    ui.campo("Fábrica", "fabrica", opcoes=FABRICAS, obrigatório=True),
+                    ui.campo("Unidade", "fabrica", opcoes=UNIDADES, obrigatório=True),
                     ui.campo("Onde fica", "local", obrigatório=True,
                              placeholder="Ex.: Corredor da expedição, ao lado do extintor"),
                     cls="linha-form",
@@ -2562,7 +2574,7 @@ async def post(req, kid: int):
         return barrado
     form = await req.form()
     dados = {k: (v.strip() if isinstance(v, str) else v) for k, v in form.items()}
-    if dados.get("fabrica") not in FABRICAS or not dados.get("local"):
+    if dados.get("fabrica") not in UNIDADES or not dados.get("local"):
         return RedirectResponse(
             _msg(f"/kit-ambiental/{kid}", "erro",
                  "Informe a fábrica e onde o kit fica."),
@@ -4123,7 +4135,8 @@ def get(req, pid: int, erro: str = ""):
                          valor=dados["forma_aplicacao"], opcoes=FORMAS_APLICACAO,
                          ajuda="Como o produto é aplicado no processo."),
                 ui.campo("Área solicitante", "area_solicitante",
-                         valor=dados["area_solicitante"], opcoes=AREAS_SOLICITANTES),
+                         valor=dados["area_solicitante"], grupos=AREAS_POR_UNIDADE,
+                         ajuda="A área precisa ser de uma das unidades autorizadas."),
                 ui.campo("Prazo de utilização", "prazo_utilizacao",
                          valor=dados["prazo_utilizacao"], opcoes=PRAZOS_UTILIZACAO),
                 ui.campo("Quantidade prevista", "consumo_estimado",
@@ -4166,7 +4179,7 @@ def get(req, pid: int, erro: str = ""):
                             Span(n),
                             cls="caixa-marcar",
                         )
-                        for n in FABRICAS
+                        for n in UNIDADES
                     ],
                     cls="grupo-marcar",
                 ),
@@ -4280,7 +4293,7 @@ async def post(req, pid: int):
     usuario = eu(req)
     form = await req.form()
     dados = {k: (v.strip() if isinstance(v, str) else v) for k, v in form.items()}
-    dados["fabricas"] = [f for f in form.getlist("fabricas") if f in FABRICAS]
+    dados["fabricas"] = [f for f in form.getlist("fabricas") if f in UNIDADES]
     dados["controles"] = _ler_controles(form)
     dados["riscos"] = [r for r in form.getlist("riscos") if r in CLASSES_RISCO]
 
@@ -4300,6 +4313,20 @@ async def post(req, pid: int):
         return RedirectResponse(
             _msg(f"/produtos/{pid}/editar", "erro",
                  "Produto inflamável: informe o ponto de fulgor (seção 9 da FDS)."),
+            status_code=303,
+        )
+
+    # A área precisa pertencer a alguma das unidades autorizadas do produto.
+    # Na edição o produto pode estar liberado em mais de uma unidade, então
+    # basta a área ser de uma delas.
+    area = (dados.get("area_solicitante") or "").strip()
+    if area and dados["fabricas"] and not any(
+        par_valido(u, area) for u in dados["fabricas"]
+    ):
+        return RedirectResponse(
+            _msg(f"/produtos/{pid}/editar", "erro",
+                 f'A área "{area}" não pertence a nenhuma das unidades '
+                 "autorizadas deste produto."),
             status_code=303,
         )
 
@@ -4589,7 +4616,7 @@ def _filtros_fds(q, fabrica, tipo_produto, orgao, situacao):
                 "Buscar", "q", valor=q,
                 placeholder="produto, nome técnico, fabricante, código ou CAS",
             ),
-            ui.campo("Fábrica", "fabrica", valor=fabrica, opcoes=FABRICAS),
+            ui.campo("Unidade", "fabrica", valor=fabrica, opcoes=UNIDADES),
             ui.campo("Tipo de produto", "tipo_produto", valor=tipo_produto, opcoes=TIPOS_PRODUTO),
             ui.campo(
                 "Produto controlado", "orgao", valor=orgao,

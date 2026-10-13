@@ -145,6 +145,17 @@ REGRAS = [
        "¡Listo! La solicitud se registró con el protocolo {0}"),
     _r(r"^Preencha os campos obrigatórios: (.+)$", "Fill in the required fields: {0}",
        "Complete los campos obligatorios: {0}"),
+    _r(r'^A área "(.*)" não é da unidade (.+)\. Escolha uma área da unidade '
+       r"selecionada\.$",
+       'The area "{0}" does not belong to unit {1}. Pick an area of the '
+       "selected unit.",
+       'El área "{0}" no es de la unidad {1}. Elija un área de la unidad '
+       "seleccionada.", (0,)),
+    _r(r'^A área "(.*)" não pertence a nenhuma das unidades autorizadas '
+       r"deste produto\.$",
+       'The area "{0}" does not belong to any of this product\'s authorized units.',
+       'El área "{0}" no pertenece a ninguna de las unidades autorizadas '
+       "de este producto.", (0,)),
     _r(r"^Solicitação de empresa terceira: preencha também (.+)$",
        "Third-party request: also fill in {0}",
        "Solicitud de empresa tercera: complete también {0}"),

@@ -320,10 +320,44 @@ def campo(
     opcoes: list | None = None,
     placeholder: str | None = None,
     linhas: int | None = None,
+    grupos: dict[str, list] | None = None,
 ):
     rot = Span(
         rotulo, Span(" *", cls="obr") if obrigatório else None, cls="rot"
     )
+    if grupos is not None:
+        # Lista separada por título (optgroup). Usada na escolha da área,
+        # que vem agrupada por unidade - "Qualidade" existe em mais de uma,
+        # e sem o título não dá para saber qual é qual.
+        chaves = [o for itens in grupos.values() for o in itens]
+        legado = (
+            [Option(f"{valor} (valor atual)", value=valor, selected=True)]
+            if valor and valor not in chaves
+            else []
+        )
+        # O mesmo nome de área aparece em mais de um grupo ("Qualidade" existe
+        # em Pinda e no MC). Só a PRIMEIRA ocorrência leva o `selected`: duas
+        # marcadas fazem o navegador destacar a última, que pode não ser a da
+        # unidade do produto.
+        ja_marcado = False
+        blocos = []
+        for titulo, itens in grupos.items():
+            opcoes_grupo = []
+            for o in itens:
+                marcar = (valor == o) and not ja_marcado
+                ja_marcado = ja_marcado or marcar
+                opcoes_grupo.append(Option(o, value=o, selected=marcar))
+            blocos.append(Optgroup(*opcoes_grupo, label=titulo))
+        entrada = Select(
+            Option("Selecione...", value="", selected=not valor),
+            *legado,
+            *blocos,
+            name=nome,
+            required=obrigatório,
+        )
+        return Label(
+            rot, entrada, Span(ajuda, cls="ajuda") if ajuda else None, cls="campo"
+        )
     if opcoes is not None:
         chaves = [o if isinstance(o, str) else o[0] for o in opcoes]
         # Valor antigo fora da lista continua visível (e não se perde ao salvar).
