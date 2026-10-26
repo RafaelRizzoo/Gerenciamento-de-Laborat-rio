@@ -123,7 +123,7 @@ TIPOS_DOCUMENTO = {
 # Documentos obrigatórios para submeter uma solicitacao
 DOCUMENTOS_OBRIGATORIOS = ["FDS"]
 
-ESTADOS_FISICOS = ["Sólido", "Líquido", "Gás", "Pasta / Gel", "Aerossol"]
+ESTADOS_FISICOS = ["Sólido", "Líquido", "Gás"]
 
 # Respostas objetivas: no formulário aparecem como lista suspensa, para
 # ninguém digitar "sim", "SIM", "s" ou "afirmativo".
@@ -131,12 +131,12 @@ SIM_NAO = {"SIM": "Sim", "NAO": "Não"}
 
 # Por quanto tempo o produto será usado na planta.
 PRAZOS_UTILIZACAO = [
-    "Uso único / pontual",
-    "Até 6 meses",
-    "De 6 a 12 meses",
-    "De 1 a 2 anos",
-    "Acima de 2 anos",
-    "Uso contínuo (sem prazo definido)",
+    "Uso Único",
+    "Até 6 Meses",
+    "Até 1 Ano",
+    "Até 2 Anos",
+    "Acima de 2 Anos",
+    "Uso Contínuo",
 ]
 
 # Unidade da quantidade prevista de consumo.
@@ -166,8 +166,8 @@ UNIDADES = [
 
 # Tipo de produto: categoria principal usada no cadastro e no filtro de FDS.
 TIPOS_PRODUTO = [
-    "Lubrificante",
-    "Hidráulico",
+    "Óleo Lubrificante",
+    "Óleo Hidráulico",
     "Emulsão",
     "Limpeza",
     "Solvente",
@@ -232,13 +232,15 @@ def par_valido(unidade: str | None, area: str | None) -> bool:
 # Como o produto é aplicado na planta. Padronizado para dar para filtrar
 # depois ("me mostre tudo o que é aplicado por pulverização").
 FORMAS_APLICACAO = [
-    "Manual (pincel, pano, rolo)",
-    "Pulverização / spray",
+    "Aplicação Manual (Pano, Pincel ou Rolo)",
+    "Pulverização / Spray",
     "Imersão",
-    "Dosagem automática",
-    "Circulação em sistema fechado",
-    "Mistura em tanque",
-    "Aplicação por terceiro",
+    "Dosagem Automática",
+    "Circulação em Sistema Fechado",
+    "Mistura ou Diluição em Tanque",
+    "Aplicação por Terceiros",
+    "Transferência entre Recipientes",
+    "Limpeza e Higienização",
     "Outros",
 ]
 
@@ -437,6 +439,30 @@ class Produto(Base):
         order_by="ProdutoEPI.id",
         lazy="selectin",
     )
+    cas: Mapped[list["ProdutoCAS"]] = relationship(
+        back_populates="produto",
+        cascade="all, delete-orphan",
+        order_by="ProdutoCAS.id",
+        lazy="selectin",
+    )
+
+    @property
+    def cas_numeros(self) -> list[str]:
+        """Todos os números CAS do produto, na ordem em que foram informados.
+
+        A FDS costuma trazer um CAS por substância da composição, então um
+        produto tem vários. O campo antigo `numero_cas`, de um valor só,
+        continua gravado e serve de reserva para cadastros que ainda não
+        passaram pela conversão.
+        """
+        lista = [c.numero for c in self.cas if c.numero]
+        if not lista and self.numero_cas:
+            return [self.numero_cas]
+        return lista
+
+    @property
+    def cas_label(self) -> str:
+        return ", ".join(self.cas_numeros) or ""
 
     @property
     def status_label(self) -> str:
@@ -651,6 +677,26 @@ class ProdutoEPI(Base):
     epi: Mapped[str] = mapped_column(Unicode(80), nullable=False)
 
     produto: Mapped["Produto"] = relationship(back_populates="epis")
+
+
+class ProdutoCAS(Base):
+    """Um número CAS da composição do produto.
+
+    A FDS traz um CAS por substância (seção 3), então um produto tem vários.
+    Antes existia um campo único `numero_cas` no produto, que continua lá
+    para não perder o que já estava cadastrado.
+    """
+
+    __tablename__ = "produto_cas"
+    __table_args__ = (
+        UniqueConstraint("produto_id", "numero", name="uq_produto_cas"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    produto_id: Mapped[int] = mapped_column(ForeignKey("produtos.id"), nullable=False)
+    numero: Mapped[str] = mapped_column(Unicode(40), nullable=False)
+
+    produto: Mapped["Produto"] = relationship(back_populates="cas")
 
 
 class ControleOrgao(Base):

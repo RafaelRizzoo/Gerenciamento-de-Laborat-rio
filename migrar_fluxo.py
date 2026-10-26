@@ -8,6 +8,9 @@ O que mudou:
     editável na tela de Aprovações.
   * "Fábrica" virou "Unidade", e a lista antiga, que misturava unidade com
     área, foi separada: COSE e MC SCON2 eram áreas, não unidades.
+  * Tipo de produto, forma de aplicação e prazo de utilização mudaram de
+    grafia e de conteúdo.
+  * O número CAS, que era um só por produto, virou uma lista.
 
 Este script ajusta os dados já cadastrados. Pode ser rodado mais de uma
 vez sem efeito colateral.
@@ -27,6 +30,7 @@ from models import (
     Aprovacao,
     PontoColetaKit,
     Produto,
+    ProdutoCAS,
     ProdutoFabrica,
     Usuario,
 )
@@ -43,6 +47,67 @@ UNIDADE_ANTIGA = {
     "MC TCHB": "MC",
     "RDO": "RDO",
 }
+
+
+# Vocabulários que mudaram de grafia ou de conteúdo. Chave = valor antigo,
+# valor = valor novo. O que não estiver aqui fica como está e aparece na tela
+# marcado como "(valor atual)".
+VOCABULARIO_ANTIGO = {
+    "tipo_produto": {
+        "Lubrificante": "Óleo Lubrificante",
+        "Hidráulico": "Óleo Hidráulico",
+    },
+    "forma_aplicacao": {
+        "Manual (pincel, pano, rolo)": "Aplicação Manual (Pano, Pincel ou Rolo)",
+        "Pulverização / spray": "Pulverização / Spray",
+        "Dosagem automática": "Dosagem Automática",
+        "Circulação em sistema fechado": "Circulação em Sistema Fechado",
+        "Mistura em tanque": "Mistura ou Diluição em Tanque",
+        "Aplicação por terceiro": "Aplicação por Terceiros",
+    },
+    "prazo_utilizacao": {
+        "Uso único / pontual": "Uso Único",
+        "Até 6 meses": "Até 6 Meses",
+        "De 6 a 12 meses": "Até 1 Ano",
+        "De 1 a 2 anos": "Até 2 Anos",
+        "Acima de 2 anos": "Acima de 2 Anos",
+        "Uso contínuo (sem prazo definido)": "Uso Contínuo",
+    },
+    "estado_fisico": {
+        # "Pasta / Gel" e "Aerossol" saíram da lista e não têm equivalente:
+        # ficam como estão, visíveis como "(valor atual)" até alguém editar.
+    },
+}
+
+
+def _converter_vocabulario(s) -> None:
+    """Atualiza os valores de tipo, forma de aplicação e prazo."""
+    trocas = 0
+    for produto in s.scalars(select(Produto)):
+        for campo, mapa in VOCABULARIO_ANTIGO.items():
+            atual = getattr(produto, campo, None)
+            novo = mapa.get(atual)
+            if novo and novo != atual:
+                setattr(produto, campo, novo)
+                trocas += 1
+    s.flush()
+    if trocas:
+        print(f"{trocas} valor(es) de lista convertidos para a grafia nova.")
+
+
+def _converter_cas(s) -> None:
+    """Move o CAS único do produto para a tabela de vários CAS."""
+    criados = 0
+    for produto in s.scalars(select(Produto)):
+        if not produto.numero_cas or produto.cas:
+            continue
+        for numero in [n.strip() for n in produto.numero_cas.split(",")]:
+            if numero:
+                s.add(ProdutoCAS(produto_id=produto.id, numero=numero))
+                criados += 1
+    s.flush()
+    if criados:
+        print(f"{criados} número(s) CAS movidos para a lista do produto.")
 
 
 def _converter_unidades(s) -> None:
@@ -174,6 +239,10 @@ def executar() -> None:
 
         # 6) fábrica -> unidade ------------------------------------------
         _converter_unidades(s)
+
+        # 7) vocabulários e números CAS -----------------------------------
+        _converter_vocabulario(s)
+        _converter_cas(s)
 
     print("\nMigração concluída.")
     print("Confira em Aprovações > Aprovadores por área quem responde por cada uma.")

@@ -7,6 +7,8 @@ Regras de navegacao adotadas:
     quem esta logado e o link para sair.
 """
 
+from urllib.parse import quote_plus
+
 from fasthtml.common import *  # noqa: F403
 
 import config
@@ -482,6 +484,53 @@ def linha_fluxo(produto, mostrar_parecer: bool = True):
             )
         )
     return Div(*blocos, cls="pareceres")
+
+
+def paginacao(pagina: int, total: int, por_pagina: int, url: str, filtros: dict):
+    """Numerinhos de página (1 2 3 ...) com os filtros preservados no link.
+
+    Devolve None quando tudo cabe numa página só, para não poluir a tela.
+    """
+    paginas = max(1, -(-total // por_pagina))  # divisão para cima
+    if paginas <= 1:
+        return None
+    pagina = min(max(1, pagina), paginas)
+
+    def link(n: int):
+        partes = {k: v for k, v in filtros.items() if v}
+        partes["pagina"] = n
+        consulta = "&".join(f"{k}={quote_plus(str(v))}" for k, v in partes.items())
+        return f"{url}?{consulta}"
+
+    # Mostra no máximo 7 números, com reticências nas pontas quando há mais.
+    if paginas <= 7:
+        numeros = list(range(1, paginas + 1))
+    else:
+        numeros = sorted(
+            {1, paginas}
+            | {n for n in range(pagina - 1, pagina + 2) if 1 <= n <= paginas}
+        )
+
+    itens = []
+    anterior = 0
+    for n in numeros:
+        if anterior and n > anterior + 1:
+            itens.append(Span("…", cls="reticencias"))
+        itens.append(
+            Span(str(n), cls="pag atual") if n == pagina
+            else A(str(n), href=link(n), cls="pag")
+        )
+        anterior = n
+
+    return Nav(
+        A("‹ Anterior", href=link(pagina - 1), cls="pag seta")
+        if pagina > 1 else Span("‹ Anterior", cls="pag seta desligada"),
+        Div(*itens, cls="pag-numeros"),
+        A("Próxima ›", href=link(pagina + 1), cls="pag seta")
+        if pagina < paginas else Span("Próxima ›", cls="pag seta desligada"),
+        cls="paginacao",
+        aria_label="Paginação",
+    )
 
 
 def cartao_documento(doc, prefixo: str = ""):

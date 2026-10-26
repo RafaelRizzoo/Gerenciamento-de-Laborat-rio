@@ -253,6 +253,39 @@ def extrair_cas(texto: str) -> str:
     return max(contagem, key=lambda c: (contagem[c], -achados.index(c)))
 
 
+def _digito_cas_confere(numero: str) -> bool:
+    """Confere o dígito verificador do CAS.
+
+    O último dígito é a soma dos demais, cada um multiplicado pela sua
+    posição contada da direita, módulo 10. Serve para descartar número de
+    telefone, código de norma e data que caem no mesmo formato.
+    """
+    corpo, _, verificador = numero.rpartition("-")
+    digitos = corpo.replace("-", "")
+    if not digitos.isdigit() or not verificador.isdigit():
+        return False
+    soma = sum(int(d) * (i + 1) for i, d in enumerate(reversed(digitos)))
+    return soma % 10 == int(verificador)
+
+
+def extrair_numeros_cas(texto: str) -> list[str]:
+    """Todos os números CAS da FDS, na ordem em que aparecem.
+
+    A FDS traz um CAS por substância da composição (seção 3), e a mistura
+    costuma ter vários. A água entra na lista aqui - diferente de
+    `extrair_cas()`, que procura o componente principal e por isso a
+    descarta.
+
+    Só entram números cujo dígito verificador confere, senão qualquer
+    "11-22-3" solto no documento viraria um CAS.
+    """
+    vistos: list[str] = []
+    for numero in _PADRAO_CAS.findall(texto):
+        if numero not in vistos and _digito_cas_confere(numero):
+            vistos.append(numero)
+    return vistos
+
+
 # Frases de perigo (GHS) mapeadas para as classes de risco do sistema.
 _FRASES_H = {
     "Inflamável": [r"\bH2(?:0[0-9]|1[0-9]|2[0-6])\b", r"inflam[áa]ve", r"combust[íi]ve"],

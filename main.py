@@ -10,6 +10,7 @@
 =====================================================================
 """
 
+import re
 import secrets
 from datetime import date, datetime
 from urllib.parse import quote, unquote
@@ -180,6 +181,27 @@ def _data(valor) -> date | None:
         return date.fromisoformat(valor.strip())
     except ValueError:
         return None
+
+
+# Formato de um número CAS: 2 a 7 dígitos, hífen, 2 dígitos, hífen, 1 dígito.
+_CAS_FORMATO = re.compile(r"\d{2,7}-\d{2}-\d")
+
+
+def _ler_cas(texto) -> list[str]:
+    """Lê o campo de números CAS: um por linha, sem repetir.
+
+    Aceita também vírgula e ponto-e-vírgula como separador, porque é o que
+    sai quando alguém copia a lista da FDS numa linha só.
+    """
+    if not texto or not isinstance(texto, str):
+        return []
+    bruto = texto.replace(",", "\n").replace(";", "\n")
+    numeros: list[str] = []
+    for linha in bruto.splitlines():
+        numero = linha.strip()
+        if numero and numero not in numeros:
+            numeros.append(numero)
+    return numeros
 
 
 def _ler_controles(form) -> list[dict]:
@@ -830,24 +852,38 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
         Input(type="hidden", name="token", value=token),
         # Depois de ver o aviso de duplicidade, reenviar confirma que é outro produto.
         Input(type="hidden", name="confirmar_duplicado", value="1") if duplicado else None,
-        # Sem login: precisamos saber quem está solicitando para o retorno.
+        # Quem está pedindo. Aparece sempre, logado ou não: vem preenchido
+        # com os dados de quem entrou, e dá para trocar quando alguém cadastra
+        # em nome de um colega que não tem acesso ao sistema.
         Fieldset(
-            Legend("Seus dados"),
+            Legend("Solicitante Tenaris"),
             P(
+                "Quem está pedindo o produto. Recebe os avisos de aprovação."
+                if usuario is not None else
                 "Você não está identificado no sistema. Informe seu nome e e-mail "
                 "corporativo para acompanhar a solicitação e receber os avisos de "
                 "aprovação.",
                 cls="texto-mudo",
             ),
             Div(
-                ui.campo("Seu nome", "solicitante_nome",
-                         valor=dados.get("solicitante_nome", ""), obrigatório=True),
-                ui.campo("Seu e-mail corporativo", "solicitante_email", "email",
-                         dados.get("solicitante_email", ""), True),
+                ui.campo(
+                    "Nome do solicitante", "solicitante_nome",
+                    valor=dados.get("solicitante_nome", "")
+                    or (usuario.nome if usuario else ""),
+                    obrigatório=True,
+                    ajuda="Troque se estiver cadastrando para outra pessoa."
+                    if usuario is not None else None,
+                ),
+                ui.campo(
+                    "E-mail do solicitante", "solicitante_email", "email",
+                    dados.get("solicitante_email", "")
+                    or (usuario.email if usuario else ""),
+                    True,
+                ),
                 cls="linha-form",
             ),
             cls="secao",
-        ) if usuario is None else None,
+        ),
         Fieldset(
             Legend("Solicitante terceiro"),
             P(
@@ -856,7 +892,7 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                 cls="texto-mudo",
             ),
             Div(
-                ui.campo("Nome do solicitante", "terceiro_nome",
+                ui.campo("Nome do solicitante terceiro", "terceiro_nome",
                          valor=dados.get("terceiro_nome", ""),
                          placeholder="Ex.: João Pereira"),
                 ui.campo("Empresa", "terceiro_empresa",
@@ -887,8 +923,13 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                 cls="linha-form",
             ),
             Div(
-                ui.campo("Número CAS", "numero_cas", valor=dados.get("numero_cas", ""),
-                         obrigatório=True, ajuda=auto("numero_cas") or "Ex.: 67-64-1"),
+                ui.campo(
+                    "Números CAS", "numero_cas",
+                    valor=dados.get("numero_cas", ""), linhas=3, obrigatório=True,
+                    placeholder="67-64-1",
+                    ajuda="Um número por linha. "
+                          + (auto("numero_cas") or "Ex.: 67-64-1"),
+                ),
                 cls="linha-form",
             ),
             Div(
@@ -946,16 +987,8 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                          opcoes=UNIDADES_CONSUMO),
                 cls="linha-form",
             ),
-            Div(
-                ui.campo("Funcionários expostos", "funcionarios_expostos", "number",
-                         dados.get("funcionarios_expostos", ""), True,
-                         ajuda="Quantos colaboradores ficam expostos ao produto "
-                               "durante o uso."),
-                ui.campo("Função dos colaboradores expostos", "funcoes_expostas",
-                         valor=dados.get("funcoes_expostas", ""), obrigatório=True,
-                         placeholder="Ex.: operador de pintura, mecânico de manutenção"),
-                cls="linha-form",
-            ),
+            # Funcionários expostos e função dos expostos saíram daqui: quem
+            # avalia exposição ocupacional é a área de Saúde, no parecer.
             cls="secao",
         ),
         Fieldset(
@@ -1131,7 +1164,7 @@ async def post(req, sess):
     obrigatorios = [
         ("nome_comercial", "Nome comercial"),
         ("fabricante", "Nome do fabricante"),
-        ("numero_cas", "Número CAS"),
+        ("numero_cas", "Números CAS"),
         ("tipo_produto", "Tipo de produto"),
         ("categoria", "Categoria química"),
         ("estado_fisico", "Estado físico"),
@@ -1142,18 +1175,15 @@ async def post(req, sess):
         ("prazo_utilizacao", "Prazo de utilização"),
         ("consumo_estimado", "Quantidade prevista"),
         ("unidade", "Unidade de medida"),
-        ("funcionarios_expostos", "Funcionários expostos"),
-        ("funcoes_expostas", "Função dos colaboradores expostos"),
         ("inflamavel", "Inflamável"),
         ("cancerigeno", "Cancerígeno"),
         ("classificacao_ghs", "Classificação GHS"),
         ("observacoes", "Observações"),
     ]
-    if usuario is None:
-        obrigatorios = [
-            ("solicitante_nome", "Seu nome"),
-            ("solicitante_email", "Seu e-mail corporativo"),
-        ] + obrigatorios
+    obrigatorios = [
+        ("solicitante_nome", "Nome do solicitante"),
+        ("solicitante_email", "E-mail do solicitante"),
+    ] + obrigatorios
     faltando = [rotulo for campo, rotulo in obrigatorios if not dados.get(campo)]
     if unidade_solicitante not in UNIDADES:
         faltando.append("Unidade solicitante")
@@ -1207,16 +1237,25 @@ async def post(req, sess):
             "Produto inflamável: informe o ponto de fulgor (seção 9 da FDS)."
         )
 
-    expostos = (dados.get("funcionarios_expostos") or "").strip()
-    if not expostos.isdigit():
-        return voltar("Funcionários expostos deve ser um número (ex.: 4).")
-    dados["funcionarios_expostos"] = int(expostos)
-
-    if usuario is None and "@" not in (dados.get("solicitante_email") or ""):
+    if "@" not in (dados.get("solicitante_email") or ""):
         return voltar("Informe um e-mail corporativo válido.")
 
     if revisao > date.today():
         return voltar("A data de revisão da FDS não pode estar no futuro.")
+
+    # Um CAS por linha. A FDS traz um por substância da composição, então a
+    # mistura tem vários; aqui só se confere o formato.
+    cas = _ler_cas(dados.get("numero_cas"))
+    invalidos = [c for c in cas if not _CAS_FORMATO.fullmatch(c)]
+    if invalidos:
+        return voltar(
+            "Número CAS fora do formato: " + ", ".join(invalidos[:3])
+            + ". O formato é 67-64-1."
+        )
+    if not cas:
+        return voltar("Informe pelo menos um número CAS.")
+    dados["cas"] = cas
+    dados["numero_cas"] = cas[0]
 
     dados["fabricas"] = [unidade_solicitante]
     dados["setor_solicitante"] = dados.get("area_solicitante")
@@ -1250,12 +1289,13 @@ async def post(req, sess):
                      "produto, reenvie o formulário para confirmar.",
             )
         dados["codigo_interno"] = servicos.proximo_codigo(s)
-        if usuario is not None:
-            solicitante = s.get(Usuario, usuario.id)
-        else:
-            solicitante = servicos.obter_ou_criar_solicitante(
-                s, dados.get("solicitante_nome"), dados.get("solicitante_email")
-            )
+        # O solicitante vem do formulário, não de quem está logado: assim dá
+        # para cadastrar em nome de um colega que não tem acesso ao sistema.
+        # Quem não mexeu no campo cai no próprio cadastro de qualquer forma,
+        # porque ele vem preenchido com os dados de quem entrou.
+        solicitante = servicos.obter_ou_criar_solicitante(
+            s, dados.get("solicitante_nome"), dados.get("solicitante_email")
+        )
         produto = servicos.criar_solicitacao(s, dados, solicitante, arquivos)
         pid = produto.id
 
@@ -3645,7 +3685,11 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
         ui.item_ficha("Fabricante", produto.fabricante),
         ui.item_ficha("Categoria", produto.categoria),
         ui.item_ficha("Tipo de produto", produto.tipo_produto),
-        ui.item_ficha("Número CAS", produto.numero_cas),
+        ui.item_ficha(
+            "Números CAS",
+            Div(*[Span(c, cls="chip") for c in produto.cas_numeros], cls="chips")
+            if produto.cas_numeros else None,
+        ),
         ui.item_ficha("Estado físico", produto.estado_fisico),
         ui.item_ficha(
             "Unidades autorizadas",
@@ -3776,6 +3820,32 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
                 ),
                 cls="campo",
             ) if "SEGURANCA" in areas_permitidas else None,
+            # A área de Saúde avalia a exposição ocupacional: quantas pessoas
+            # têm contato direto e em que função. Saiu do cadastro porque o
+            # solicitante não sabe responder.
+            Div(
+                Span("Exposição ocupacional", cls="rot"),
+                P(
+                    "Avaliação da área de Saúde. Aparece na ficha do produto "
+                    "depois de aprovado.",
+                    cls="pequeno texto-mudo",
+                ),
+                Div(
+                    ui.campo(
+                        "Funcionários expostos", "funcionarios_expostos", "number",
+                        valor=("" if produto.funcionarios_expostos is None
+                               else str(produto.funcionarios_expostos)),
+                        ajuda="Quantas pessoas têm contato direto com o produto.",
+                    ),
+                    ui.campo(
+                        "Função dos colaboradores expostos", "funcoes_expostas",
+                        valor=produto.funcoes_expostas or "",
+                        placeholder="Ex.: operador de pintura, mecânico de manutenção",
+                    ),
+                    cls="linha-form",
+                ),
+                cls="campo",
+            ) if "SAUDE" in areas_permitidas else None,
             # O Químico Responsável é quem sabe se o produto é controlado e
             # qual a licença - o solicitante não tem essa informação.
             Div(
@@ -4066,7 +4136,7 @@ def get(req, pid: int, erro: str = ""):
             "nome_tecnico": produto.nome_tecnico or "",
             "categoria": produto.categoria or "",
             "tipo_produto": produto.tipo_produto or "",
-            "numero_cas": produto.numero_cas or "",
+            "numero_cas": "\n".join(produto.cas_numeros),
             "estado_fisico": produto.estado_fisico or "",
             "composicao": produto.composicao or "",
             "processo": produto.processo or "",
@@ -4104,7 +4174,8 @@ def get(req, pid: int, erro: str = ""):
             Legend("Identificação"),
             Div(
                 ui.campo("Nome técnico", "nome_tecnico", valor=dados["nome_tecnico"]),
-                ui.campo("Número CAS", "numero_cas", valor=dados["numero_cas"]),
+                ui.campo("Números CAS", "numero_cas", valor=dados["numero_cas"],
+                         linhas=3, ajuda="Um número por linha."),
                 cls="linha-form",
             ),
             Div(
@@ -4297,6 +4368,18 @@ async def post(req, pid: int):
     dados["controles"] = _ler_controles(form)
     dados["riscos"] = [r for r in form.getlist("riscos") if r in CLASSES_RISCO]
 
+    if "numero_cas" in form:
+        cas = _ler_cas(dados.get("numero_cas"))
+        invalidos = [c for c in cas if not _CAS_FORMATO.fullmatch(c)]
+        if invalidos:
+            return RedirectResponse(
+                _msg(f"/produtos/{pid}/editar", "erro",
+                     "Número CAS fora do formato: " + ", ".join(invalidos[:3])
+                     + ". O formato é 67-64-1."),
+                status_code=303,
+            )
+        dados["cas"] = cas
+
     expostos = (dados.get("funcionarios_expostos") or "").strip()
     if expostos:
         if not expostos.isdigit():
@@ -4368,6 +4451,20 @@ async def post(req, pid: int):
         parecer = f"[{motivo}] {parecer}"
     area = (form.get("area") or "").strip() or None
     epis = [e for e in form.getlist("epis") if e in EPIS]
+    # Exposição ocupacional: só a área de Saúde preenche.
+    expostos = None
+    if "funcionarios_expostos" in form or "funcoes_expostas" in form:
+        quantos = (form.get("funcionarios_expostos") or "").strip()
+        if quantos and not quantos.isdigit():
+            return RedirectResponse(
+                _msg(f"/produtos/{pid}", "erro",
+                     "Funcionários expostos deve ser um número (ex.: 4)."),
+                status_code=303,
+            )
+        expostos = {
+            "funcionarios_expostos": int(quantos) if quantos else None,
+            "funcoes_expostas": form.get("funcoes_expostas") or "",
+        }
     # Controle regulatório: só o Químico Responsável preenche.
     orgao = (form.get("orgao_controlador") or "NAO").strip()
     numero_licenca = (form.get("numero_licenca") or "").strip()
@@ -4416,8 +4513,11 @@ async def post(req, pid: int):
                     "validade_licenca": validade_licenca,
                 }] if orgao in ORGAOS_CONTROLADORES else [],
             )
-        servicos.registrar_decisao(s, produto, u, decisao, parecer, area=area,
-                                   epis=epis if area == "SEGURANCA" else None)
+        servicos.registrar_decisao(
+            s, produto, u, decisao, parecer, area=area,
+            epis=epis if area == "SEGURANCA" else None,
+            expostos=expostos if area == "SAUDE" else None,
+        )
         rotulo = dict(FLUXO_APROVACAO).get(area, area)
     return RedirectResponse(
         _msg(f"/produtos/{pid}", "ok", f"Parecer de {rotulo} registrado."),
@@ -4609,7 +4709,7 @@ def _cartao_fds(produto, publico: bool = False):
     )
 
 
-def _filtros_fds(q, fabrica, tipo_produto, orgao, situacao):
+def _filtros_fds(q, fabrica, area, tipo_produto, orgao, situacao):
     return Form(
         Div(
             ui.campo(
@@ -4617,6 +4717,7 @@ def _filtros_fds(q, fabrica, tipo_produto, orgao, situacao):
                 placeholder="produto, nome técnico, fabricante, código ou CAS",
             ),
             ui.campo("Unidade", "fabrica", valor=fabrica, opcoes=UNIDADES),
+            ui.campo("Área", "area", valor=area, grupos=AREAS_POR_UNIDADE),
             ui.campo("Tipo de produto", "tipo_produto", valor=tipo_produto, opcoes=TIPOS_PRODUTO),
             ui.campo(
                 "Produto controlado", "orgao", valor=orgao,
@@ -4639,42 +4740,52 @@ def _filtros_fds(q, fabrica, tipo_produto, orgao, situacao):
     )
 
 
+FDS_POR_PAGINA = 10
+
+
 @rt("/fds")
-def get(req, q: str = "", fabrica: str = "", tipo_produto: str = "",
-        orgao: str = "", situacao: str = ""):
+def get(req, q: str = "", fabrica: str = "", area: str = "", tipo_produto: str = "",
+        orgao: str = "", situacao: str = "", pagina: int = 1):
     """Repositório único de consulta das Fichas de Dados de Segurança."""
     usuario = eu(req)
     with db_session() as s:
         produtos = servicos.buscar_produtos(
-            s, q, somente_aprovados=True, fabrica=fabrica, tipo_produto=tipo_produto,
-            orgao=orgao, limite=None,
+            s, q, somente_aprovados=True, fabrica=fabrica, area=area,
+            tipo_produto=tipo_produto, orgao=orgao, limite=None,
         )
         resumo = servicos.resumo_fds(produtos)
         produtos = servicos.filtrar_por_situacao_fds(produtos, situacao)
         # O que exige acao aparece primeiro: vencidas, depois a vencer.
         ordem = {"VENCIDA": 0, "PROXIMA": 1, "SEM_FDS": 2, "VIGENTE": 3}
         produtos.sort(key=lambda p: (ordem.get(p.fds_situacao, 9), p.nome_comercial))
+        ind = servicos.indicadores(s)
 
+    # Os mesmos três cartões da página inicial, para a leitura ser a mesma
+    # em todo o sistema.
+    pendentes = sum(ind["por_status"].get(e, 0) for e in STATUS_ABERTOS)
     painel = Div(
         A(
-            Div(str(resumo["VIGENTE"]), cls="valor"),
-            Div(_pontos_semaforo("VIGENTE", "Vigentes"), cls="rotulo"),
-            href="/fds?situacao=VIGENTE",
-            cls="kpi-fds",
+            Div("Produtos Aprovados", cls="rotulo"),
+            Div(str(ind["por_status"].get("APROVADO", 0)), cls="valor"),
+            Div("liberados para uso", cls="nota"),
+            href="/produtos",
+            cls="kpi-inicio verde",
         ),
         A(
-            Div(str(resumo["PROXIMA"]), cls="valor"),
-            Div(_pontos_semaforo("PROXIMA", "A vencer em 6 meses"), cls="rotulo"),
-            href="/fds?situacao=PROXIMA",
-            cls="kpi-fds",
+            Div("Produtos Pendentes", cls="rotulo"),
+            Div(str(pendentes), cls="valor"),
+            Div("em análise pelas áreas", cls="nota"),
+            href="/aprovacoes",
+            cls="kpi-inicio ambar",
         ),
         A(
-            Div(str(resumo["VENCIDA"]), cls="valor"),
-            Div(_pontos_semaforo("VENCIDA", "Vencidas"), cls="rotulo"),
-            href="/fds?situacao=VENCIDA",
-            cls="kpi-fds",
+            Div("Produtos Reprovados", cls="rotulo"),
+            Div(str(ind["por_status"].get("REPROVADO", 0)), cls="valor"),
+            Div("não liberados", cls="nota"),
+            href="/historico?status=REPROVADO",
+            cls="kpi-inicio vermelho",
         ),
-        cls="painel-fds",
+        cls="painel-inicio",
     )
 
     alertas = []
@@ -4689,17 +4800,32 @@ def get(req, q: str = "", fabrica: str = "", tipo_produto: str = "",
             )
         )
 
-    cartoes = [_cartao_fds(p) for p in produtos]
+    # 10 por página: acima disso a tela vira um rolar sem fim.
+    total = len(produtos)
+    paginas = max(1, -(-total // FDS_POR_PAGINA))
+    pagina = min(max(1, pagina), paginas)
+    inicio = (pagina - 1) * FDS_POR_PAGINA
+    visiveis = produtos[inicio:inicio + FDS_POR_PAGINA]
+    cartoes = [_cartao_fds(p) for p in visiveis]
+    navegacao = ui.paginacao(
+        pagina, total, FDS_POR_PAGINA, "/fds",
+        {"q": q, "fabrica": fabrica, "area": area, "tipo_produto": tipo_produto,
+         "orgao": orgao, "situacao": situacao},
+    )
 
     return ui.pagina(
         "Fichas de Dados de Segurança",
         painel,
-        Div(_filtros_fds(q, fabrica, tipo_produto, orgao, situacao), cls="card"),
+        Div(_filtros_fds(q, fabrica, area, tipo_produto, orgao, situacao), cls="card"),
         *alertas,
         Div(
             Div(
                 H2("Resultado da consulta"),
-                Span(f"{len(produtos)} produto(s)", cls="direita"),
+                Span(
+                    f"{total} produto(s)" if paginas == 1
+                    else f"{total} produto(s) - página {pagina} de {paginas}",
+                    cls="direita",
+                ),
                 cls="card-titulo",
             ),
             P(
@@ -4712,6 +4838,7 @@ def get(req, q: str = "", fabrica: str = "", tipo_produto: str = "",
             cls="card",
         ),
         *(cartoes if cartoes else [Div(ui.vazio("Nenhuma FDS encontrada com esses filtros.", "▣"), cls="card")]),
+        navegacao,
         usuario=usuario,
         subtitulo="Repositório único de consulta dos produtos químicos aprovados",
     )

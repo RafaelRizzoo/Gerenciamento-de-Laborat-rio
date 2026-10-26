@@ -156,6 +156,12 @@ REGRAS = [
        'The area "{0}" does not belong to any of this product\'s authorized units.',
        'El área "{0}" no pertenece a ninguna de las unidades autorizadas '
        "de este producto.", (0,)),
+    _r(r"^Número CAS fora do formato: (.+)\. O formato é 67-64-1\.$",
+       "CAS number in the wrong format: {0}. The format is 67-64-1.",
+       "Número CAS con formato incorrecto: {0}. El formato es 67-64-1."),
+    _r(r"^(\d+) produto\(s\) - página (\d+) de (\d+)$",
+       "{0} product(s) - page {1} of {2}",
+       "{0} producto(s) - página {1} de {2}"),
     _r(r"^Solicitação de empresa terceira: preencha também (.+)$",
        "Third-party request: also fill in {0}",
        "Solicitud de empresa tercera: complete también {0}"),

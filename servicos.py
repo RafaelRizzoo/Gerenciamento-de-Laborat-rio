@@ -21,6 +21,7 @@ from models import (
     Documento,
     LogAuditoria,
     Produto,
+    ProdutoCAS,
     ProdutoFabrica,
     ProdutoEPI,
     ProdutoRisco,
@@ -109,6 +110,8 @@ def criar_solicitacao(sessao, dados: dict, solicitante: Usuario, arquivos: list[
     aplicar_fabricas(sessao, produto, dados.get("fabricas") or [])
     aplicar_controles(sessao, produto, dados.get("controles") or [])
     aplicar_riscos(sessao, produto, dados.get("riscos") or [])
+    if dados.get("cas") is not None:
+        aplicar_cas(sessao, produto, dados.get("cas") or [])
 
     for ordem, (etapa, _rotulo) in enumerate(FLUXO_APROVACAO, start=1):
         sessao.add(
@@ -215,6 +218,33 @@ def aplicar_epis(sessao, produto: Produto, epis: list[str]) -> None:
     sessao.flush()
 
 
+def aplicar_cas(sessao, produto: Produto, numeros: list[str]) -> None:
+    """Deixa os números CAS do produto exatamente iguais aos informados.
+
+    A ordem informada é preservada, e repetidos são ignorados: a FDS às
+    vezes repete o mesmo CAS em faixas de concentração diferentes.
+    """
+    desejados: list[str] = []
+    for bruto in numeros or []:
+        numero = (bruto or "").strip()
+        if numero and numero not in desejados:
+            desejados.append(numero)
+
+    atuais = {c.numero: c for c in produto.cas}
+    for numero, registro in atuais.items():
+        if numero not in desejados:
+            sessao.delete(registro)
+    sessao.flush()
+    for numero in desejados:
+        if numero not in atuais:
+            sessao.add(ProdutoCAS(produto_id=produto.id, numero=numero))
+    sessao.flush()
+    # O campo antigo acompanha o primeiro da lista, para a busca e os
+    # relatórios que ainda olham para ele continuarem funcionando.
+    produto.numero_cas = desejados[0] if desejados else None
+    sessao.flush()
+
+
 def produto_duplicado(sessao, nome_comercial: str, fabricante: str) -> Produto | None:
     """Já existe cadastro com o mesmo nome comercial e fabricante?
 
@@ -265,7 +295,7 @@ def aplicar_controles(sessao, produto: Produto, controles: list[dict]) -> None:
 def atualizar_ficha(sessao, produto: Produto, dados: dict, usuario: Usuario) -> Produto:
     """Atualiza os dados de identificação, aplicação e controle regulatório."""
     campos = (
-        "nome_tecnico", "categoria", "tipo_produto", "numero_cas",
+        "nome_tecnico", "categoria", "tipo_produto",
         "composicao", "estado_fisico", "aplicacao", "processo",
         "necessidade_uso", "forma_aplicacao",
         "terceiro_nome", "terceiro_empresa", "gestor_contrato", "gestor_email",
@@ -286,11 +316,17 @@ def atualizar_ficha(sessao, produto: Produto, dados: dict, usuario: Usuario) -> 
             setattr(produto, campo, novo)
             alterados.append(campo)
 
+    if "cas" in dados:
+        antes = list(produto.cas_numeros)
+        aplicar_cas(sessao, produto, dados["cas"])
+        if antes != list(produto.cas_numeros):
+            alterados.append("números CAS")
+
     if "fabricas" in dados:
         antes = set(produto.fabricas_nomes)
         aplicar_fabricas(sessao, produto, dados["fabricas"])
         if antes != set(produto.fabricas_nomes):
-            alterados.append("fábricas")
+            alterados.append("unidades")
 
     if "riscos" in dados:
         antes = set(produto.riscos_nomes)
@@ -367,6 +403,7 @@ def pode_decidir(sessao, usuario: Usuario, produto: Produto) -> bool:
 def registrar_decisao(
     sessao, produto: Produto, usuario: Usuario, decisao: str, parecer: str,
     area: str | None = None, epis: list[str] | None = None,
+    expostos: dict | None = None,
 ) -> Produto:
     """Registra o parecer de UMA área e reavalia a situação do produto.
 
@@ -383,6 +420,16 @@ def registrar_decisao(
     # Os EPIs obrigatórios são decisão da área de Segurança.
     if epis is not None and area == "SEGURANCA":
         aplicar_epis(sessao, produto, epis)
+
+    # Quantos e quais funcionários ficam expostos é avaliação da área de
+    # Saúde: o solicitante não tem como saber, e era por isso que estes dois
+    # campos viviam em branco no cadastro.
+    if expostos is not None and area == "SAUDE":
+        if "funcionarios_expostos" in expostos:
+            produto.funcionarios_expostos = expostos["funcionarios_expostos"]
+        if "funcoes_expostas" in expostos:
+            produto.funcoes_expostas = (expostos["funcoes_expostas"] or "").strip() or None
+        sessao.flush()
 
     aprovacao = next((a for a in produto.aprovacoes if a.etapa == area), None)
     if aprovacao is None:
@@ -591,6 +638,7 @@ def buscar_produtos(
     somente_aprovados: bool = False,
     somente_com_fds: bool = False,
     fabrica: str = "",
+    area: str = "",
     tipo_produto: str = "",
     orgao: str = "",
     solicitante_id: int | None = None,
@@ -610,6 +658,7 @@ def buscar_produtos(
             | Produto.codigo_interno.like(like)
             | Produto.categoria.like(like)
             | Produto.numero_cas.like(like)
+            | Produto.cas.any(ProdutoCAS.numero.like(like))
         )
     if status:
         consulta = consulta.where(Produto.status == status)
@@ -617,6 +666,8 @@ def buscar_produtos(
         consulta = consulta.where(Produto.categoria == categoria)
     if fabrica:
         consulta = consulta.where(Produto.fabricas.any(ProdutoFabrica.fabrica == fabrica))
+    if area:
+        consulta = consulta.where(Produto.area_solicitante == area)
     if tipo_produto:
         consulta = consulta.where(Produto.tipo_produto == tipo_produto)
     if orgao == "QUALQUER":

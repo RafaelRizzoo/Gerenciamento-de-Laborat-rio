@@ -1136,3 +1136,43 @@ button.tirar:hover { text-decoration: underline; }
   background: #e8f6ee; color: #11704a; border: 1px solid #bfe3d0;
   border-radius: 999px; padding: .22rem .62rem; font-size: .78rem; font-weight: 600;
 }
+
+/* ------------------------------------------------- Paginação (1 2 3 ...) */
+.paginacao {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .9rem;
+  margin: 1.2rem 0 2rem;
+  flex-wrap: wrap;
+}
+.paginacao .pag-numeros { display: flex; align-items: center; gap: .3rem; }
+.paginacao .pag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.1rem;
+  height: 2.1rem;
+  padding: 0 .5rem;
+  border-radius: 6px;
+  border: 1px solid var(--cinza-claro);
+  background: var(--branco);
+  color: var(--cinza-escuro);
+  font-size: .88rem;
+  text-decoration: none;
+}
+.paginacao a.pag:hover { border-color: var(--verde); color: var(--verde); text-decoration: none; }
+.paginacao .pag.atual {
+  background: var(--verde);
+  border-color: var(--verde);
+  color: var(--branco);
+  font-weight: 700;
+}
+.paginacao .pag.seta { min-width: auto; }
+.paginacao .pag.desligada { opacity: .4; }
+.paginacao .reticencias { color: var(--cinza-escuro); opacity: .6; padding: 0 .2rem; }
+
+@media (max-width: 560px) {
+  .paginacao { gap: .4rem; }
+  .paginacao .pag.seta { font-size: .8rem; }
+}
