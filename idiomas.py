@@ -206,6 +206,10 @@ REGRAS = [
     _r(r"^Editar item - (.+)$", "Edit item - {0}", "Editar artículo - {0}"),
     _r(r"^Item do (.+)$", "Item of {0}", "Artículo de {0}"),
     # Validade -------------------------------------------------------------
+    _r(r"^vence em (.+) \(faltam (\d+) dias\)$",
+       "expires on {0} ({1} days left)", "vence el {0} (faltan {1} días)"),
+    _r(r"^venceu em (.+) \((\d+) dias atrás\)$",
+       "expired on {0} ({1} days ago)", "venció el {0} (hace {1} días)"),
     _r(r"^vence em (.+)$", "expires on {0}", "vence el {0}"),
     _r(r"^venceu em (.+)$", "expired on {0}", "venció el {0}"),
     _r(r"^válida até (.+)$", "valid until {0}", "válida hasta {0}"),
