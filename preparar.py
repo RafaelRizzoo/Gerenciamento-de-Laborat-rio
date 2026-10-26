@@ -5,8 +5,7 @@ Roda sempre na mesma ordem e é seguro repetir:
 1. cria/atualiza as tabelas e converte dados de versões anteriores;
 2. se o banco estiver vazio, carrega os dados de exemplo (seed).
 
-Usado pelo `iniciar.bat` (instalação sem Docker) e pelo
-`docker-entrypoint.sh` (instalação com Docker).
+Usado pelo `iniciar.bat`.
 """
 
 from sqlalchemy import func, select

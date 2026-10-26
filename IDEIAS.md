@@ -156,8 +156,7 @@ tela o que vai em cada um.
 
 Hoje roda na máquina de quem abre o `iniciar.bat`, com banco SQLite local.
 Para a planta inteira usar, precisa de um servidor só, rodando o tempo todo,
-com o banco em um lugar só e backup. A opção com Docker já está preparada
-(`DOCKER.md`).
+com o banco em um lugar só e backup.
 
 ---
 

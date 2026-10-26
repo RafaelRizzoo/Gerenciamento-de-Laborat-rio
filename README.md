@@ -16,7 +16,6 @@ bibliotecas, prepara o banco e sobe a aplicação em
 **http://localhost:5001**.
 
 Guia passo a passo para quem vai instalar do zero: **`INSTALAR.md`**.
-Para rodar em contêiner: **`DOCKER.md`** (`recreate.bat`).
 
 <details>
 <summary>Fazendo na mão, comando por comando</summary>
@@ -130,9 +129,8 @@ terço esquerdo escuro e sem detalhe, porque o texto branco fica sobre ele.
 | `extracao.py` | Leitura do PDF da FDS (preenche parte do cadastro) |
 | `preparar.py` | Cria/atualiza tabelas e carrega exemplos se o banco estiver vazio |
 | `migrar_fluxo.py` | Converte bancos de versões anteriores do fluxo |
-| `iniciar.bat` | **Sem Docker:** instala o que falta e liga o sistema |
-| `recreate.bat` | **Com Docker:** atualiza, reconstrói e liga o contêiner |
-| `INSTALAR.md` / `DOCKER.md` | Guias de instalação para quem só vai usar |
+| `iniciar.bat` | Instala o que falta, atualiza o código e liga o sistema |
+| `INSTALAR.md` / `COMECAR.md` | Guias de instalação para quem só vai usar |
 
 ### Paleta aplicada (cores oficiais Tenaris)
 

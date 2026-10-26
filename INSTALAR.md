@@ -1,18 +1,12 @@
 # Instalação — Gestão de Produtos Químicos
 
-Há dois jeitos de rodar o sistema. **Escolha um só.**
-
-| | Precisa instalar | Quando usar |
-|---|---|---|
-| **A. Sem Docker** (recomendado) | Python (e Git, opcional) | Computador pessoal, uso normal |
-| **B. Com Docker** | Docker Desktop + Git | Quem já usa Docker ou vai colocar num servidor |
-
-O jeito A é o mais leve: o Python ocupa uns 100 MB e não mexe em nada do
-Windows. O passo a passo do jeito B está no `DOCKER.md`.
+Para rodar o sistema basta ter o Python (e o Git, se quiser receber as
+atualizações sozinho). O Python ocupa uns 100 MB e não mexe em nada do
+Windows.
 
 ---
 
-# A. Rodar sem Docker
+# Instalar e abrir
 
 ## 1. Baixar o projeto
 
@@ -76,15 +70,7 @@ baixa as novidades sozinho. **Os dados cadastrados não são apagados.**
 
 ---
 
-# B. Rodar com Docker
-
-Passo a passo completo no **`DOCKER.md`**. Em resumo: instalar o Docker
-Desktop, instalar o Git, clonar o projeto e dar duplo clique no
-`recreate.bat`.
-
----
-
-# Como usar (vale para os dois jeitos)
+# Como usar
 
 **Para abrir o sistema:** <http://localhost:5001> — vale salvar nos
 favoritos.
@@ -119,9 +105,8 @@ Só na instalação e nas atualizações. No uso normal, não — tudo roda no
 próprio computador.
 
 **Os dados ficam onde?**
-Sem Docker: no arquivo `gestao_quimicos.db`, dentro da pasta do projeto.
-Com Docker: num volume do Docker, fora do contêiner. Nos dois casos,
-atualizar o sistema não apaga nada.
+No arquivo `gestao_quimicos.db`, dentro da pasta do projeto. Atualizar o
+sistema não apaga nada.
 
 **O que eu cadastrar aparece para a Julia?**
 Não. Cada instalação tem o seu próprio banco, separado. Para todos verem os
@@ -135,11 +120,9 @@ configurado, tudo o que seria enviado fica registrado na tela
 
 **Apareceu "a porta 5001 já está em uso" / erro 10048?**
 Quer dizer que outro programa já está ocupando o endereço `localhost:5001` —
-quase sempre o contêiner do Docker ligado, ou o próprio sistema já aberto em
-outra janela preta. O `iniciar.bat` detecta isso e pergunta se pode
-encerrar o outro; se preferir resolver na mão, pare o contêiner pelo Docker
-Desktop (aba *Containers*, item **gestao-quimicos**) ou feche a janela
-antiga.
+quase sempre o próprio sistema já aberto em outra janela preta. O
+`iniciar.bat` detecta isso e pergunta se pode encerrar o outro; se preferir
+resolver na mão, feche a janela antiga.
 
 **Deu erro, e agora?**
 A própria janela preta mostra a mensagem. Tire um print dela e mande para o

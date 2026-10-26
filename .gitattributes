@@ -1,13 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 
-# Arquivos que rodam dentro do contêiner Linux precisam de fim de linha LF,
-# mesmo quando o repositório e' clonado no Windows. Sem isto, o
-# docker-entrypoint.sh falha com "no such file or directory".
-*.sh            text eol=lf
-Dockerfile      text eol=lf
-docker-entrypoint.sh text eol=lf
-*.yml           text eol=lf
 # Os .bat rodam no cmd.exe do Windows: precisam de CRLF.
 *.bat           text eol=crlf
 *.cmd           text eol=crlf
