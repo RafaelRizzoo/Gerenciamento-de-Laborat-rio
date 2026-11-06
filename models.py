@@ -293,8 +293,29 @@ def unidade_da_area(unidades: list[str], area: str | None) -> str | None:
     return next((u for u in unidades if par_valido(u, area)), None)
 
 
+# E-mails corporativos reais dos técnicos de Segurança.
+EMAIL_TECNICO = {
+    "Paulo Rocha": "phrocha@tenaris.com",
+    "Paulo Oliveira": "poliveira@tenaris.com",
+    "Manoel Messias": "mmsilva@tenaris.com",
+    "Rafael Luz": "rcluz@tenaris.com",
+    "Claudio Santos": "cfbcfs@tenaris.com",
+    "Cesar Ranna": "ceranna@tenaris.com",
+    "Maicon Lima": "mdlima@tenaris.com",
+    "Antonio Santos": "amdossantos@tenaris.com",
+    "Priscila Jele": "pdjele@tenaris.com",
+}
+
+
 def email_do_tecnico(nome: str) -> str:
-    """E-mail no padrão nome.sobrenome@tenaris.com (sem acento)."""
+    """E-mail corporativo do técnico (se não estiver na lista, nome.sobrenome)."""
+    if nome in EMAIL_TECNICO:
+        return EMAIL_TECNICO[nome]
+    return email_provisorio_tecnico(nome)
+
+
+def email_provisorio_tecnico(nome: str) -> str:
+    """Padrão nome.sobrenome@tenaris.com (sem acento), usado antes dos e-mails reais."""
     import unicodedata
 
     texto = unicodedata.normalize("NFKD", nome).encode("ascii", "ignore").decode()

@@ -28,12 +28,13 @@ from models import (
     ProdutoRisco,
     Usuario,
     email_do_tecnico,
+    email_provisorio_tecnico,
     par_valido,
     tecnico_da_area,
     unidade_da_area,
 )
 
-SENHA_PADRAO_TECNICO = "tenaris123"
+SENHA_PADRAO_TECNICO = "123456"
 
 
 # ------------------------------------------------------------ Auditoria
@@ -107,9 +108,11 @@ def resolver_tecnico(sessao, unidade: str | None, area: str | None,
 def garantir_tecnicos_seguranca(sessao) -> int:
     """Cria o login dos técnicos de Segurança que ainda não existem.
 
-    E-mail no padrão nome.sobrenome@tenaris.com e senha padrão, com troca
-    obrigatória no primeiro acesso. Idempotente: quem já existe (por nome ou
-    por e-mail) só é vinculado à área de Segurança.
+    E-mail corporativo real e senha padrão, com troca obrigatória no primeiro
+    acesso. Idempotente: quem já existe (por e-mail ou por nome) só é
+    vinculado à área de Segurança. Contas criadas antes com o e-mail provisório
+    (nome.sobrenome) passam para o e-mail real, e a senha volta ao padrão se a
+    pessoa ainda não a trocou.
     """
     criados = 0
     for nome in TECNICOS_SEGURANCA:
@@ -119,6 +122,10 @@ def garantir_tecnicos_seguranca(sessao) -> int:
             usuario = sessao.scalar(
                 select(Usuario).where(Usuario.nome == nome, Usuario.ativo.is_(True))
             )
+            if usuario is not None and usuario.email == email_provisorio_tecnico(nome):
+                usuario.email = email
+                if usuario.precisa_trocar_senha:
+                    usuario.senha_hash = gerar_hash(SENHA_PADRAO_TECNICO)
         if usuario is None:
             usuario = Usuario(
                 nome=nome,
