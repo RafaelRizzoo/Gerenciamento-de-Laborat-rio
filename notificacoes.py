@@ -124,31 +124,18 @@ def notificar_etapa_pendente(sessao, produto: Produto, etapa: str):
 
 
 def notificar_envio(sessao, produto: Produto):
-    """Solicitação enviada: avisa quem analisa primeiro e confirma o envio.
-
-    Fluxo novo: só a Segurança (o técnico da área) recebe agora; Meio
-    Ambiente, Saúde e Químico Responsável são avisados quando ela aprovar.
-    Fluxo antigo (solicitações já abertas): as quatro áreas de uma vez.
-    """
-    if produto.seguranca_primeiro:
-        notificar_etapa_pendente(sessao, produto, "SEGURANCA")
-        tecnico = produto.tecnico_seguranca
-        quem = f"o técnico de Segurança {tecnico.nome}" if tecnico else "a Segurança"
-        andamento = (
-            f"Sua solicitação foi enviada para aprovação e está com {quem}. "
-            f"Depois da Segurança, ela segue para Meio Ambiente, Saúde e "
-            f"Químico Responsável, que analisam em paralelo, e por fim para o "
-            f"Aprovador Final."
-        )
-    else:
-        for area, _rotulo in AREAS_APROVACAO:
-            notificar_etapa_pendente(sessao, produto, area)
-        areas = ", ".join(rotulo for _, rotulo in AREAS_APROVACAO)
-        andamento = (
-            f"Sua solicitação foi enviada para aprovação e já está com as áreas "
-            f"{areas}, que analisam em paralelo. Concluídas as quatro, a "
-            f"solicitação segue para o Aprovador Final."
-        )
+    """Solicitação enviada: avisa as quatro áreas de uma vez (na Segurança,
+    só o técnico responsável) e confirma o envio ao solicitante."""
+    for area, _rotulo in AREAS_APROVACAO:
+        notificar_etapa_pendente(sessao, produto, area)
+    areas = ", ".join(rotulo for _, rotulo in AREAS_APROVACAO)
+    tecnico = produto.tecnico_seguranca
+    detalhe = f" (na Segurança, com {tecnico.nome})" if tecnico else ""
+    andamento = (
+        f"Sua solicitação foi enviada para aprovação e já está com as áreas "
+        f"{areas}{detalhe}, que analisam em paralelo. Concluídas as quatro, a "
+        f"solicitação segue para o Aprovador Final."
+    )
 
     assunto = f"[Produtos Químicos] Solicitação enviada - {produto.nome_comercial}"
     corpo = (

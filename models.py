@@ -448,9 +448,9 @@ class Produto(Base):
     consumo_estimado: Mapped[str | None] = mapped_column(Unicode(60), nullable=True)
     unidade: Mapped[str | None] = mapped_column(Unicode(20), nullable=True)
     # Onde o produto será usado (unidade da planta) e quem, na Segurança, é
-    # responsável por essa área. `seguranca_primeiro` marca as solicitações
-    # do fluxo novo: a Segurança aprova antes das demais áreas. As antigas
-    # (em branco) seguem em paralelo, como foram abertas.
+    # responsável por essa área. `seguranca_primeiro` (nome histórico) marca
+    # as solicitações com técnico definido na abertura. Não cria ordem: todas
+    # as áreas analisam ao mesmo tempo, só o Aprovador Final espera.
     unidade_solicitante: Mapped[str | None] = mapped_column(Unicode(20), nullable=True)
     tecnico_seguranca_id: Mapped[int | None] = mapped_column(
         ForeignKey("usuarios.id"), nullable=True
@@ -580,9 +580,6 @@ class Produto(Base):
             return None
         if pendentes == [ETAPA_FINAL]:
             return "Aprovador Final"
-        # Fluxo novo: enquanto a Segurança não aprova, é só ela que conta.
-        if self.seguranca_primeiro and "SEGURANCA" in pendentes:
-            return "Segurança"
         nomes = [dict(FLUXO_APROVACAO).get(e, e) for e in pendentes if e != ETAPA_FINAL]
         if len(nomes) == 1:
             return nomes[0]
@@ -599,11 +596,7 @@ class Produto(Base):
 
     @property
     def aguardando_labels(self) -> list[str]:
-        """Quem a solicitação espera AGORA (já considerando a ordem).
-
-        No fluxo novo, enquanto a Segurança não aprova só ela aparece, com o
-        nome do técnico responsável.
-        """
+        """Quem a solicitação espera agora, com o nome do técnico na Segurança."""
         rotulos = dict(FLUXO_APROVACAO)
         saida = []
         for etapa in self.areas_pendentes:
@@ -623,10 +616,8 @@ class Produto(Base):
     def aguarda(self, area: str) -> bool:
         """A solicitação depende do parecer desta área AGORA?
 
-        Fluxo antigo: as áreas analisam em paralelo. Fluxo novo
-        (`seguranca_primeiro`): a Segurança aprova antes, e só então Meio
-        Ambiente, Saúde e Químico Responsável recebem a vez. Nos dois, o
-        Aprovador Final só entra quando todas as áreas tiverem concluído.
+        As quatro áreas analisam em paralelo, cada uma independe das outras.
+        O Aprovador Final só entra quando todas tiverem concluído.
         """
         if self.status not in STATUS_ABERTOS:
             return False
@@ -634,8 +625,6 @@ class Produto(Base):
         if area == ETAPA_FINAL:
             return ETAPA_FINAL in pendentes and self.areas_concluidas
         if area not in pendentes:
-            return False
-        if self.seguranca_primeiro and area != "SEGURANCA" and "SEGURANCA" in pendentes:
             return False
         return True
 

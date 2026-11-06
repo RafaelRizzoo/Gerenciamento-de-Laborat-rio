@@ -208,9 +208,6 @@ REGRAS = [
     # Técnico de Segurança --------------------------------------------------
     _r(r"^Aguardando análise de (.+)$", "Awaiting review by {0}", "En espera de análisis de {0}"),
     _r(r"^Segurança \((.+)\)$", "Safety ({0})", "Seguridad ({0})"),
-    _r(r"^A solicitação está com o técnico de Segurança da área: (.+)\. Só ele a recebe agora\.$",
-       "The request is with the area's Safety technician: {0}. Only they receive it now.",
-       "La solicitud está con el técnico de Seguridad del área: {0}. Solo él la recibe ahora."),
     _r(r"^Técnico de Segurança alterado para (.+)\.$",
        "Safety technician changed to {0}.", "Técnico de Seguridad cambiado a {0}."),
     _r(r"^O técnico (.+) ainda não tem login no sistema\. Peça ao administrador para cadastrá-lo em Aprovações\.$",

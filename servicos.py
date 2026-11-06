@@ -642,11 +642,6 @@ def registrar_decisao(
     elif produto.etapa_atual == ETAPA_FINAL:
         # Só agora o Aprovador Final é chamado.
         notificacoes.notificar_etapa_pendente(sessao, produto, ETAPA_FINAL)
-    elif etapa == "SEGURANCA" and produto.seguranca_primeiro:
-        # A Segurança abriu caminho: agora as demais áreas são chamadas.
-        for outra, _rotulo in AREAS_APROVACAO:
-            if outra != "SEGURANCA" and produto.aguarda(outra):
-                notificacoes.notificar_etapa_pendente(sessao, produto, outra)
     return produto
 
 

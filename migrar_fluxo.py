@@ -11,9 +11,10 @@ O que mudou:
   * Tipo de produto, forma de aplicação e prazo de utilização mudaram de
     grafia e de conteúdo.
   * O número CAS, que era um só por produto, virou uma lista.
-  * Cada área da planta passou a ter um técnico de Segurança responsável,
-    e a Segurança aprova antes das demais áreas nas solicitações novas. As
-    que já estavam em análise seguem como foram abertas.
+  * Cada área da planta passou a ter um técnico de Segurança responsável:
+    só ele recebe a análise de Segurança das solicitações novas. As demais
+    áreas continuam em paralelo e as que já estavam em análise seguem como
+    foram abertas.
 
 Este script ajusta os dados já cadastrados. Pode ser rodado mais de uma
 vez sem efeito colateral.

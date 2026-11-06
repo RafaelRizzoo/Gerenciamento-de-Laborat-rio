@@ -1140,7 +1140,7 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
             Button("Enviar para aprovação", cls="btn verde", type="submit"),
             A("Trocar a FDS", href="/solicitacoes/nova", cls="btn secundario"),
             Span(
-                "Ao enviar, a solicitação segue para o técnico de Segurança da área.",
+                "Ao enviar, a solicitação aparece, na Segurança, só para este técnico.",
                 cls="pequeno texto-mudo direita",
             ),
             cls="barra-acoes",
@@ -1438,7 +1438,6 @@ def get(req, sess, pid: int):
         fabricante = produto.fabricante or "-"
         email = produto.solicitante.email if produto.solicitante else ""
         tecnico = produto.tecnico_seguranca.nome if produto.tecnico_seguranca else None
-        seguranca_primeiro = bool(produto.seguranca_primeiro)
 
     areas = ", ".join(rotulo for _, rotulo in AREAS_APROVACAO)
 
@@ -1461,18 +1460,13 @@ def get(req, sess, pid: int):
         Div(
             Div(H2("O que acontece agora"), cls="card-titulo"),
             Ol(
-                Li(B("Segurança primeiro. "),
-                   "A solicitação está com o técnico de Segurança da área"
-                   + (f": {tecnico}. " if tecnico else ". ")
-                   + "Só ele a recebe agora.")
-                if seguranca_primeiro else
                 Li(B("Análise das áreas. "),
                    f"A solicitação está com {areas} ao mesmo tempo - não há ordem "
                    "entre elas, cada uma dá o seu parecer quando puder."),
-                Li(B("Depois da Segurança. "),
-                   "Com a aprovação da Segurança, Meio Ambiente, Saúde e Químico "
-                   "Responsável analisam ao mesmo tempo.")
-                if seguranca_primeiro else None,
+                Li(B("Técnico de Segurança. "),
+                   "Na Segurança, só o técnico responsável recebe a solicitação: ",
+                   tecnico, ".")
+                if tecnico else None,
                 Li(B("Aprovador Final. "),
                    "Concluídas as áreas, a solicitação segue para o "
                    "Aprovador Final, que fecha a aprovação."),

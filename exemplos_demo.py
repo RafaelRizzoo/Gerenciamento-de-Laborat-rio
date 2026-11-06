@@ -240,7 +240,6 @@ def executar() -> int:
             produto.criado_em = datetime.now() - timedelta(days=dias)
             s.flush()
 
-            # A Segurança aprova primeiro; depois as outras áreas.
             if marcador == "completo":
                 etapas = ["SEGURANCA", "MEIO_AMBIENTE", "SAUDE",
                           "QUIMICO_RESPONSAVEL", "APROVADOR_FINAL"]

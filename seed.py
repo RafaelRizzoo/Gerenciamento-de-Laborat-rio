@@ -1032,7 +1032,6 @@ def executar(recriar: bool = True):
             s.flush()
 
             # Não há ordem entre as áreas; o Aprovador Final fecha depois delas.
-            # A Segurança aprova primeiro; depois as outras três, em paralelo.
             areas = ["SEGURANCA", "MEIO_AMBIENTE", "SAUDE", "QUIMICO_RESPONSAVEL"]
             etapas = areas + ["APROVADOR_FINAL"]
 
