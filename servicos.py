@@ -15,6 +15,7 @@ from models import (
     ORGAOS_CONTROLADORES,
     STATUS,
     STATUS_ABERTOS,
+    TECNICOS_SEGURANCA,
     Aprovacao,
     AreaAprovador,
     ControleOrgao,
@@ -26,7 +27,13 @@ from models import (
     ProdutoEPI,
     ProdutoRisco,
     Usuario,
+    email_do_tecnico,
+    par_valido,
+    tecnico_da_area,
+    unidade_da_area,
 )
+
+SENHA_PADRAO_TECNICO = "tenaris123"
 
 
 # ------------------------------------------------------------ Auditoria
@@ -61,6 +68,144 @@ def proximo_codigo(sessao) -> str:
         select(func.count(Produto.id)).where(Produto.codigo_interno.like(f"{prefixo}%"))
     )
     return f"{prefixo}{(total or 0) + 1:04d}"
+
+
+# ------------------------------------------- Técnico de Segurança da área
+def tecnico_por_nome(sessao, nome: str | None) -> Usuario | None:
+    """Usuário ativo com esse nome que responde pela área de Segurança."""
+    nome = (nome or "").strip()
+    if not nome:
+        return None
+    candidatos = list(
+        sessao.scalars(
+            select(Usuario).where(Usuario.nome == nome, Usuario.ativo.is_(True))
+        ).unique()
+    )
+    for usuario in candidatos:
+        if "SEGURANCA" in areas_do_usuario(sessao, usuario):
+            return usuario
+    return None
+
+
+def resolver_tecnico(sessao, unidade: str | None, area: str | None,
+                     escolhido: str | None = None) -> Usuario | None:
+    """Quem, na Segurança, analisa uma solicitação desta unidade e área.
+
+    Área com responsável fixo: vale sempre o da tabela, mesmo que o
+    formulário traga outro nome (o campo é bloqueado na tela, e aqui o
+    servidor não confia no que veio). Área sem responsável: vale o técnico
+    escolhido pelo solicitante, que precisa ser um dos técnicos da lista.
+    """
+    fixo = tecnico_da_area(unidade, area)
+    if fixo:
+        return tecnico_por_nome(sessao, fixo)
+    if escolhido in TECNICOS_SEGURANCA:
+        return tecnico_por_nome(sessao, escolhido)
+    return None
+
+
+def garantir_tecnicos_seguranca(sessao) -> int:
+    """Cria o login dos técnicos de Segurança que ainda não existem.
+
+    E-mail no padrão nome.sobrenome@tenaris.com e senha padrão, com troca
+    obrigatória no primeiro acesso. Idempotente: quem já existe (por nome ou
+    por e-mail) só é vinculado à área de Segurança.
+    """
+    criados = 0
+    for nome in TECNICOS_SEGURANCA:
+        email = email_do_tecnico(nome)
+        usuario = sessao.scalar(select(Usuario).where(Usuario.email == email))
+        if usuario is None:
+            usuario = sessao.scalar(
+                select(Usuario).where(Usuario.nome == nome, Usuario.ativo.is_(True))
+            )
+        if usuario is None:
+            usuario = Usuario(
+                nome=nome,
+                email=email,
+                senha_hash=gerar_hash(SENHA_PADRAO_TECNICO),
+                papel="SEGURANCA",
+                setor="Segurança do Trabalho",
+                ativo=True,
+                precisa_trocar_senha=True,
+            )
+            sessao.add(usuario)
+            sessao.flush()
+            criados += 1
+        vinculo = sessao.scalar(
+            select(AreaAprovador).where(
+                AreaAprovador.area == "SEGURANCA", AreaAprovador.usuario_id == usuario.id
+            )
+        )
+        if vinculo is None:
+            sessao.add(AreaAprovador(area="SEGURANCA", usuario_id=usuario.id, ativo=True))
+        elif not vinculo.ativo:
+            vinculo.ativo = True
+    sessao.flush()
+    return criados
+
+
+def visivel_na_fila(sessao, usuario: Usuario, produto: Produto) -> bool:
+    """A solicitação aparece na tela de Aprovações para esta pessoa?
+
+    Técnico de Segurança só enxerga as solicitações da sua área: as dos
+    colegas não aparecem. Quem tem outra função de aprovação, o aprovador
+    final e o administrador continuam vendo todas.
+    """
+    if usuario is None:
+        return False
+    if usuario.papel in ("ADMIN", "APROVADOR_FINAL"):
+        return True
+    if produto.solicitante_id == usuario.id:
+        return True
+    if not produto.tecnico_seguranca_id or produto.tecnico_seguranca_id == usuario.id:
+        return True
+    return any(a != "SEGURANCA" for a in areas_do_usuario(sessao, usuario))
+
+
+def trocar_tecnico_seguranca(sessao, produto: Produto, novo: Usuario, autor: Usuario) -> Produto:
+    """Passa a análise de Segurança para outro técnico (ausência, férias).
+
+    Só vale enquanto a Segurança ainda não deu parecer. A troca fica no
+    histórico e o novo técnico é avisado.
+    """
+    if "SEGURANCA" not in produto.areas_pendentes or not produto.aberta:
+        raise ValueError("A Segurança já deu parecer: não há mais o que reatribuir.")
+    if "SEGURANCA" not in areas_do_usuario(sessao, novo):
+        raise ValueError("Escolha um técnico que responda pela Segurança.")
+    anterior = produto.tecnico_seguranca
+    if anterior and anterior.id == novo.id:
+        return produto
+    produto.tecnico_seguranca_id = novo.id
+    sessao.flush()
+    sessao.refresh(produto)
+    registrar_log(
+        sessao,
+        "TECNICO_SEGURANCA_TROCADO",
+        f"Técnico de Segurança alterado de {anterior.nome if anterior else 'ninguém definido'}"
+        f" para {novo.nome}.",
+        autor.id,
+        produto.id,
+    )
+    notificacoes.notificar_etapa_pendente(sessao, produto, "SEGURANCA")
+    return produto
+
+
+def reavaliar_tecnico(sessao, produto: Produto, autor: Usuario) -> None:
+    """Depois de editar a área do produto, confere se o técnico ainda é o certo.
+
+    Só age enquanto a Segurança não deu parecer e quando a área tem
+    responsável fixo; nas demais, a escolha feita no cadastro fica.
+    """
+    if not produto.seguranca_primeiro or "SEGURANCA" not in produto.areas_pendentes:
+        return
+    unidade = produto.unidade_da_solicitacao
+    if not par_valido(unidade, produto.area_solicitante):
+        unidade = unidade_da_area(produto.fabricas_nomes, produto.area_solicitante)
+    produto.unidade_solicitante = unidade
+    novo = resolver_tecnico(sessao, unidade, produto.area_solicitante)
+    if novo and novo.id != produto.tecnico_seguranca_id:
+        trocar_tecnico_seguranca(sessao, produto, novo, autor)
 
 
 # --------------------------------------------------------- Solicitação
@@ -103,7 +248,19 @@ def criar_solicitacao(sessao, dados: dict, solicitante: Usuario, arquivos: list[
         status="PENDENTE",
         etapa_atual=None,
         solicitante_id=solicitante.id,
+        seguranca_primeiro=dados.get("seguranca_primeiro", True),
     )
+    # Unidade onde o produto será usado e técnico de Segurança responsável.
+    # Quando o formulário não traz a unidade (cargas de exemplo), ela sai da
+    # área, olhando as unidades autorizadas.
+    produto.unidade_solicitante = dados.get("unidade_solicitante") or unidade_da_area(
+        dados.get("fabricas") or [], dados.get("area_solicitante")
+    )
+    tecnico = resolver_tecnico(
+        sessao, produto.unidade_solicitante, dados.get("area_solicitante"),
+        dados.get("tecnico_seguranca"),
+    )
+    produto.tecnico_seguranca_id = tecnico.id if tecnico else None
     sessao.add(produto)
     sessao.flush()
 
@@ -344,6 +501,9 @@ def atualizar_ficha(sessao, produto: Produto, dados: dict, usuario: Usuario) -> 
 
     produto.atualizado_em = datetime.now()
     sessao.flush()
+    if "area_solicitante" in alterados or "unidades" in alterados:
+        sessao.refresh(produto)
+        reavaliar_tecnico(sessao, produto, usuario)
     registrar_log(
         sessao,
         "FICHA_ATUALIZADA",
@@ -388,7 +548,11 @@ def areas_para_decidir(sessao, usuario: Usuario, produto: Produto) -> list[str]:
     """Etapas deste produto que o usuário pode decidir agora."""
     if produto.status not in ("PENDENTE", "EM_ANALISE"):
         return []
-    return [area for area in areas_do_usuario(sessao, usuario) if produto.aguarda(area)]
+    return [
+        area
+        for area in areas_do_usuario(sessao, usuario)
+        if produto.aguarda_usuario(area, usuario.id)
+    ]
 
 
 def pode_decidir(sessao, usuario: Usuario, produto: Produto) -> bool:
@@ -478,6 +642,11 @@ def registrar_decisao(
     elif produto.etapa_atual == ETAPA_FINAL:
         # Só agora o Aprovador Final é chamado.
         notificacoes.notificar_etapa_pendente(sessao, produto, ETAPA_FINAL)
+    elif etapa == "SEGURANCA" and produto.seguranca_primeiro:
+        # A Segurança abriu caminho: agora as demais áreas são chamadas.
+        for outra, _rotulo in AREAS_APROVACAO:
+            if outra != "SEGURANCA" and produto.aguarda(outra):
+                notificacoes.notificar_etapa_pendente(sessao, produto, outra)
     return produto
 
 
@@ -552,7 +721,7 @@ def solicitacoes_pendentes_de(sessao, usuario: Usuario) -> list[Produto]:
             .order_by(Produto.criado_em)
         ).unique()
     )
-    return [p for p in abertas if any(p.aguarda(a) for a in areas)]
+    return [p for p in abertas if any(p.aguarda_usuario(a, usuario.id) for a in areas)]
 
 
 def contar_pendencias(sessao, usuario: Usuario) -> int:

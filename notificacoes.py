@@ -83,6 +83,17 @@ def destinatarios_da_area(sessao, area: str) -> list[Usuario]:
     return list(pessoas.values())
 
 
+def destinatarios_da_etapa(sessao, produto: Produto, etapa: str) -> list[Usuario]:
+    """Quem recebe o aviso de uma etapa DESTE produto.
+
+    Na Segurança, quando há técnico responsável definido, o aviso vai só para
+    ele: os demais técnicos nem ficam sabendo da solicitação.
+    """
+    if etapa == "SEGURANCA" and produto.tecnico_seguranca and produto.tecnico_seguranca.ativo:
+        return [produto.tecnico_seguranca]
+    return destinatarios_da_area(sessao, etapa)
+
+
 def _resumo_produto(produto: Produto) -> str:
     return (
         f"Produto:     {produto.nome_comercial}\n"
@@ -95,7 +106,7 @@ def _resumo_produto(produto: Produto) -> str:
 def notificar_etapa_pendente(sessao, produto: Produto, etapa: str):
     """Avisa os responsaveis pela etapa que existe uma análise pendente."""
     rotulo = dict(FLUXO_APROVACAO).get(etapa, etapa)
-    responsaveis = destinatarios_da_area(sessao, etapa)
+    responsaveis = destinatarios_da_etapa(sessao, produto, etapa)
     assunto = f"[Produtos Químicos] Análise pendente - {produto.nome_comercial}"
     for usuario in responsaveis:
         corpo = (
@@ -113,18 +124,36 @@ def notificar_etapa_pendente(sessao, produto: Produto, etapa: str):
 
 
 def notificar_envio(sessao, produto: Produto):
-    """Solicitação enviada: avisa TODAS as áreas de uma vez (elas analisam
-    em paralelo) e confirma o envio para o solicitante."""
-    for area, _rotulo in AREAS_APROVACAO:
-        notificar_etapa_pendente(sessao, produto, area)
+    """Solicitação enviada: avisa quem analisa primeiro e confirma o envio.
+
+    Fluxo novo: só a Segurança (o técnico da área) recebe agora; Meio
+    Ambiente, Saúde e Químico Responsável são avisados quando ela aprovar.
+    Fluxo antigo (solicitações já abertas): as quatro áreas de uma vez.
+    """
+    if produto.seguranca_primeiro:
+        notificar_etapa_pendente(sessao, produto, "SEGURANCA")
+        tecnico = produto.tecnico_seguranca
+        quem = f"o técnico de Segurança {tecnico.nome}" if tecnico else "a Segurança"
+        andamento = (
+            f"Sua solicitação foi enviada para aprovação e está com {quem}. "
+            f"Depois da Segurança, ela segue para Meio Ambiente, Saúde e "
+            f"Químico Responsável, que analisam em paralelo, e por fim para o "
+            f"Aprovador Final."
+        )
+    else:
+        for area, _rotulo in AREAS_APROVACAO:
+            notificar_etapa_pendente(sessao, produto, area)
+        areas = ", ".join(rotulo for _, rotulo in AREAS_APROVACAO)
+        andamento = (
+            f"Sua solicitação foi enviada para aprovação e já está com as áreas "
+            f"{areas}, que analisam em paralelo. Concluídas as quatro, a "
+            f"solicitação segue para o Aprovador Final."
+        )
 
     assunto = f"[Produtos Químicos] Solicitação enviada - {produto.nome_comercial}"
-    areas = ", ".join(rotulo for _, rotulo in AREAS_APROVACAO)
     corpo = (
         f"Olá {produto.solicitante.nome},\n\n"
-        f"Sua solicitação foi enviada para aprovação e já está com as áreas "
-        f"{areas}, que analisam em paralelo. Concluídas as quatro, a "
-        f"solicitação segue para o Aprovador Final.\n\n"
+        f"{andamento}\n\n"
         f"{_resumo_produto(produto)}\n"
         f"Acompanhe por aqui: {_url_produto(produto)}\n\n"
         f"-- {config.APP_EMPRESA} | {config.APP_NOME}"
@@ -144,7 +173,7 @@ def notificar_lembrete(sessao, produto: Produto):
     assunto = f"[Produtos Químicos] Lembrete: análise pendente há {dias} dia(s) - {produto.nome_comercial}"
     for area in pendentes:
         rotulo = dict(FLUXO_APROVACAO).get(area, area)
-        for usuario in destinatarios_da_area(sessao, area):
+        for usuario in destinatarios_da_etapa(sessao, produto, area):
             corpo = (
                 f"Olá {usuario.nome},\n\n"
                 f"A solicitação abaixo está aguardando o parecer de {rotulo} há "

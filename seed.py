@@ -11,6 +11,7 @@ import servicos
 from database import criar_tabelas, db_session
 from models import (
     Aprovacao,
+    AreaAprovador,
     ControleOrgao,
     Documento,
     LogAuditoria,
@@ -946,7 +947,7 @@ def limpar(sessao):
     for modelo in (Notificacao, LogAuditoria, RecursoArquivo, Recurso,
                    ItemKit, PontoColetaKit, KitAmbiental, Documento,
                    Aprovacao, ControleOrgao, ProdutoFabrica, ProdutoRisco,
-                   Produto, Usuario):
+                   Produto, AreaAprovador, Usuario):
         sessao.query(modelo).delete()
 
 
@@ -973,6 +974,8 @@ def executar(recriar: bool = True):
             s.add(u)
             usuarios[papel] = u
         s.flush()
+        # Técnicos de Segurança de cada área (login + vínculo com a Segurança).
+        servicos.garantir_tecnicos_seguranca(s)
 
         solicitante = usuarios["SOLICITANTE"]
         pareceres = {
@@ -1029,17 +1032,21 @@ def executar(recriar: bool = True):
             s.flush()
 
             # Não há ordem entre as áreas; o Aprovador Final fecha depois delas.
-            areas = ["MEIO_AMBIENTE", "SAUDE", "SEGURANCA", "QUIMICO_RESPONSAVEL"]
+            # A Segurança aprova primeiro; depois as outras três, em paralelo.
+            areas = ["SEGURANCA", "MEIO_AMBIENTE", "SAUDE", "QUIMICO_RESPONSAVEL"]
             etapas = areas + ["APROVADOR_FINAL"]
+
+            def decisor(etapa):
+                """Quem assina: na Segurança, o técnico definido para a área."""
+                if etapa == "SEGURANCA" and produto.tecnico_seguranca:
+                    return produto.tecnico_seguranca
+                return usuarios[etapa]
+
             if marcador == "reprovado":
-                servicos.registrar_decisao(
-                    s, produto, usuarios["MEIO_AMBIENTE"], "APROVADO",
-                    pareceres["MEIO_AMBIENTE"], area="MEIO_AMBIENTE",
-                )
                 servicos.registrar_decisao(
                     s,
                     produto,
-                    usuarios["SEGURANCA"],
+                    decisor("SEGURANCA"),
                     "REPROVADO",
                     "Produto contém diclorometano (suspeita de carcinogenicidade). "
                     "Solicitar alternativa isenta de solventes clorados.",
@@ -1048,7 +1055,7 @@ def executar(recriar: bool = True):
             elif marcador == "descontinuado":
                 for etapa in etapas:
                     servicos.registrar_decisao(
-                        s, produto, usuarios[etapa], "APROVADO", pareceres[etapa],
+                        s, produto, decisor(etapa), "APROVADO", pareceres[etapa],
                         area=etapa,
                     )
                 servicos.descontinuar(
@@ -1065,7 +1072,7 @@ def executar(recriar: bool = True):
                     quantas = 5
                 for etapa in etapas[:quantas]:
                     servicos.registrar_decisao(
-                        s, produto, usuarios[etapa], "APROVADO", pareceres[etapa],
+                        s, produto, decisor(etapa), "APROVADO", pareceres[etapa],
                         area=etapa,
                     )
 

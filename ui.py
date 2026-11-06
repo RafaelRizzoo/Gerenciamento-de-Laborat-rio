@@ -434,10 +434,17 @@ def _parecer_area(ap, produto, mostrar_parecer: bool = True):
         classe, sinal, situacao = "reprovado", "✕", "Reprovado"
     elif produto.aguarda(ap.etapa):
         classe, sinal, situacao = "atual", "•", "Aguardando análise"
+        # Na Segurança, diz de quem: só aquele técnico recebe a solicitação.
+        if ap.etapa == "SEGURANCA" and getattr(produto, "tecnico_seguranca", None):
+            situacao = f"Aguardando análise de {produto.tecnico_seguranca.nome}"
     else:
-        classe, sinal, situacao = "", "•", (
-            "Aguarda as demais áreas" if ap.etapa == ETAPA_FINAL else "Não iniciada"
-        )
+        if ap.etapa == ETAPA_FINAL:
+            espera = "Aguarda as demais áreas"
+        elif produto.seguranca_primeiro and "SEGURANCA" in produto.areas_pendentes:
+            espera = "Aguarda a Segurança"
+        else:
+            espera = "Não iniciada"
+        classe, sinal, situacao = "", "•", espera
 
     if ap.decisao == "PENDENTE":
         meta = situacao
@@ -469,12 +476,28 @@ def linha_fluxo(produto, mostrar_parecer: bool = True):
     areas = [por_etapa[chave] for chave, _ in AREAS_APROVACAO if chave in por_etapa]
     final = por_etapa.get(ETAPA_FINAL)
 
-    blocos = [
-        Div(
-            *[_parecer_area(ap, produto, mostrar_parecer) for ap in areas],
-            cls="areas-parecer",
-        )
-    ]
+    if produto.seguranca_primeiro and "SEGURANCA" in por_etapa:
+        # Fluxo novo: a Segurança vai primeiro e as outras três, depois dela.
+        blocos = [
+            Div(_parecer_area(por_etapa["SEGURANCA"], produto, mostrar_parecer),
+                cls="areas-parecer"),
+            Div(
+                Span("Depois da Segurança", cls="rotulo-final"),
+                Div(
+                    *[_parecer_area(ap, produto, mostrar_parecer)
+                      for ap in areas if ap.etapa != "SEGURANCA"],
+                    cls="areas-parecer",
+                ),
+                cls="bloco-final",
+            ),
+        ]
+    else:
+        blocos = [
+            Div(
+                *[_parecer_area(ap, produto, mostrar_parecer) for ap in areas],
+                cls="areas-parecer",
+            )
+        ]
     if final is not None:
         blocos.append(
             Div(

@@ -228,6 +228,78 @@ def par_valido(unidade: str | None, area: str | None) -> bool:
     """A área pertence mesmo a essa unidade?"""
     return bool(area) and area in AREAS_POR_UNIDADE.get(unidade or "", [])
 
+
+# ---------------------------------------------------------------------
+# Técnico de Segurança responsável por cada área
+# ---------------------------------------------------------------------
+# A solicitação vai para UM técnico de Segurança, definido pelo par
+# unidade + área. Os outros técnicos não a veem. Áreas sem responsável
+# fixo (hoje só Rio das Ostras) deixam o solicitante escolher na lista.
+#
+# Esta tabela é o único lugar onde a regra mora: para trocar um técnico de
+# área, basta alterar o nome aqui.
+
+TECNICOS_SEGURANCA = [
+    "Paulo Rocha",
+    "Paulo Oliveira",
+    "Manoel Messias",
+    "Rafael Luz",
+    "Claudio Santos",
+    "Cesar Ranna",
+    "Maicon Lima",
+    "Antonio Santos",
+    "Priscila Jele",
+]
+
+TECNICO_POR_AREA: dict[tuple[str, str], str | None] = {
+    ("Pinda", "Fábrica 4"): "Rafael Luz",
+    ("Pinda", "Manutenção F4"): "Rafael Luz",
+    ("Pinda", "Rev 6 - Externo"): "Claudio Santos",
+    ("Pinda", "Rev 10 - Interno"): "Claudio Santos",
+    ("Pinda", "Rev Concreto"): "Claudio Santos",
+    ("Pinda", "Rev 4"): "Claudio Santos",
+    ("Pinda", "Rev PPS"): "Claudio Santos",
+    ("Pinda", "Manutenção Rev"): "Claudio Santos",
+    ("Pinda", "MAOG - SCON"): "Manoel Messias",
+    ("Pinda", "MAOG - RCON"): "Manoel Messias",
+    ("Pinda", "MAOG - F1 - ERW"): "Manoel Messias",
+    ("Pinda", "MAOG - F6"): "Manoel Messias",
+    ("Pinda", "COSE"): "Cesar Ranna",
+    ("Pinda", "COSE 4º Processo"): "Cesar Ranna",
+    ("Pinda", "Manutenção MAOG"): "Paulo Rocha",
+    ("Pinda", "SUCH"): "Cesar Ranna",
+    ("Pinda", "Manutenção - Almoxarifado"): "Paulo Oliveira",
+    ("Pinda", "Manutenção - Oficina"): "Paulo Rocha",
+    ("Pinda", "Manutenção - Oficina de veículos"): "Paulo Rocha",
+    ("Pinda", "Manutenção - ETE"): "Paulo Rocha",
+    ("Pinda", "Qualidade"): "Paulo Oliveira",
+    ("Pinda", "Restaurante e Limpeza"): "Paulo Oliveira",
+    ("MC", "SCON 2"): "Priscila Jele",
+    ("MC", "Qualidade"): "Priscila Jele",
+    ("MC", "TCHB"): "Priscila Jele",
+    ("MC", "SUCH"): "Priscila Jele",
+    # Sem responsável fixo: o solicitante escolhe na lista de técnicos.
+    ("RDO", "Rio das Ostras"): None,
+}
+
+
+def tecnico_da_area(unidade: str | None, area: str | None) -> str | None:
+    """Nome do técnico de Segurança da área, ou None se a escolha é manual."""
+    return TECNICO_POR_AREA.get((unidade or "", area or ""))
+
+
+def unidade_da_area(unidades: list[str], area: str | None) -> str | None:
+    """Primeira das unidades em que a área existe (para dados antigos)."""
+    return next((u for u in unidades if par_valido(u, area)), None)
+
+
+def email_do_tecnico(nome: str) -> str:
+    """E-mail no padrão nome.sobrenome@tenaris.com (sem acento)."""
+    import unicodedata
+
+    texto = unicodedata.normalize("NFKD", nome).encode("ascii", "ignore").decode()
+    return ".".join(texto.lower().split()) + "@tenaris.com"
+
 # Classes de risco (um produto pode acumular várias).
 # Como o produto é aplicado na planta. Padronizado para dar para filtrar
 # depois ("me mostre tudo o que é aplicado por pulverização").
@@ -375,6 +447,17 @@ class Produto(Base):
     processo: Mapped[str | None] = mapped_column(Unicode(180), nullable=True)
     consumo_estimado: Mapped[str | None] = mapped_column(Unicode(60), nullable=True)
     unidade: Mapped[str | None] = mapped_column(Unicode(20), nullable=True)
+    # Onde o produto será usado (unidade da planta) e quem, na Segurança, é
+    # responsável por essa área. `seguranca_primeiro` marca as solicitações
+    # do fluxo novo: a Segurança aprova antes das demais áreas. As antigas
+    # (em branco) seguem em paralelo, como foram abertas.
+    unidade_solicitante: Mapped[str | None] = mapped_column(Unicode(20), nullable=True)
+    tecnico_seguranca_id: Mapped[int | None] = mapped_column(
+        ForeignKey("usuarios.id"), nullable=True
+    )
+    seguranca_primeiro: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True, default=False
+    )
     local_armazenamento: Mapped[str | None] = mapped_column(Unicode(120), nullable=True)
 
     # Segurança / meio ambiente
@@ -402,7 +485,12 @@ class Produto(Base):
     # Última vez que o sistema cobrou os aprovadores pendentes por e-mail.
     ultimo_lembrete_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    solicitante: Mapped["Usuario"] = relationship(lazy="joined")
+    solicitante: Mapped["Usuario"] = relationship(
+        lazy="joined", foreign_keys="Produto.solicitante_id"
+    )
+    tecnico_seguranca: Mapped["Usuario | None"] = relationship(
+        lazy="joined", foreign_keys="Produto.tecnico_seguranca_id"
+    )
     aprovacoes: Mapped[list["Aprovacao"]] = relationship(
         back_populates="produto",
         cascade="all, delete-orphan",
@@ -492,6 +580,9 @@ class Produto(Base):
             return None
         if pendentes == [ETAPA_FINAL]:
             return "Aprovador Final"
+        # Fluxo novo: enquanto a Segurança não aprova, é só ela que conta.
+        if self.seguranca_primeiro and "SEGURANCA" in pendentes:
+            return "Segurança"
         nomes = [dict(FLUXO_APROVACAO).get(e, e) for e in pendentes if e != ETAPA_FINAL]
         if len(nomes) == 1:
             return nomes[0]
@@ -507,6 +598,24 @@ class Produto(Base):
         return [dict(FLUXO_APROVACAO).get(e, e) for e in self.areas_pendentes]
 
     @property
+    def aguardando_labels(self) -> list[str]:
+        """Quem a solicitação espera AGORA (já considerando a ordem).
+
+        No fluxo novo, enquanto a Segurança não aprova só ela aparece, com o
+        nome do técnico responsável.
+        """
+        rotulos = dict(FLUXO_APROVACAO)
+        saida = []
+        for etapa in self.areas_pendentes:
+            if not self.aguarda(etapa):
+                continue
+            rotulo = rotulos.get(etapa, etapa)
+            if etapa == "SEGURANCA" and self.tecnico_seguranca:
+                rotulo = f"{rotulo} ({self.tecnico_seguranca.nome})"
+            saida.append(rotulo)
+        return saida
+
+    @property
     def areas_concluidas(self) -> bool:
         """Todas as áreas (menos o Aprovador Final) já decidiram?"""
         return not [e for e in self.areas_pendentes if e != ETAPA_FINAL]
@@ -514,15 +623,42 @@ class Produto(Base):
     def aguarda(self, area: str) -> bool:
         """A solicitação depende do parecer desta área AGORA?
 
-        As áreas analisam em paralelo; o Aprovador Final só entra quando
-        todas as demais tiverem concluído.
+        Fluxo antigo: as áreas analisam em paralelo. Fluxo novo
+        (`seguranca_primeiro`): a Segurança aprova antes, e só então Meio
+        Ambiente, Saúde e Químico Responsável recebem a vez. Nos dois, o
+        Aprovador Final só entra quando todas as áreas tiverem concluído.
         """
         if self.status not in STATUS_ABERTOS:
             return False
         pendentes = self.areas_pendentes
         if area == ETAPA_FINAL:
             return ETAPA_FINAL in pendentes and self.areas_concluidas
-        return area in pendentes
+        if area not in pendentes:
+            return False
+        if self.seguranca_primeiro and area != "SEGURANCA" and "SEGURANCA" in pendentes:
+            return False
+        return True
+
+    def aguarda_usuario(self, area: str, usuario_id: int | None) -> bool:
+        """Como `aguarda`, mas a etapa de Segurança só vale para o técnico
+        escolhido para esta solicitação (quando há um)."""
+        if not self.aguarda(area):
+            return False
+        if (
+            area == "SEGURANCA"
+            and self.tecnico_seguranca_id
+            and self.tecnico_seguranca_id != usuario_id
+        ):
+            return False
+        return True
+
+    @property
+    def unidade_da_solicitacao(self) -> str | None:
+        """Unidade em que o produto será usado (cadastros antigos: a primeira
+        unidade em que a área existe)."""
+        if self.unidade_solicitante:
+            return self.unidade_solicitante
+        return unidade_da_area(self.fabricas_nomes, self.area_solicitante)
 
     @property
     def aberta(self) -> bool:

@@ -11,6 +11,9 @@ O que mudou:
   * Tipo de produto, forma de aplicação e prazo de utilização mudaram de
     grafia e de conteúdo.
   * O número CAS, que era um só por produto, virou uma lista.
+  * Cada área da planta passou a ter um técnico de Segurança responsável,
+    e a Segurança aprova antes das demais áreas nas solicitações novas. As
+    que já estavam em análise seguem como foram abertas.
 
 Este script ajusta os dados já cadastrados. Pode ser rodado mais de uma
 vez sem efeito colateral.
@@ -243,6 +246,12 @@ def executar() -> None:
         # 7) vocabulários e números CAS -----------------------------------
         _converter_vocabulario(s)
         _converter_cas(s)
+
+        # 8) técnicos de Segurança por área -------------------------------
+        novos = servicos.garantir_tecnicos_seguranca(s)
+        if novos:
+            print(f"{novos} técnico(s) de Segurança cadastrados "
+                  "(senha padrão, troca obrigatória no primeiro acesso).")
 
     print("\nMigração concluída.")
     print("Confira em Aprovações > Aprovadores por área quem responde por cada uma.")

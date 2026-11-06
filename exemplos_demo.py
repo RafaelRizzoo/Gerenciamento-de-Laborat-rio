@@ -202,6 +202,7 @@ def executar() -> int:
 
     criados = 0
     with db_session() as s:
+        servicos.garantir_tecnicos_seguranca(s)
         aprovadores = _usuarios(s)
         faltando = [p for p, u in aprovadores.items() if u is None]
         if faltando:
@@ -239,17 +240,21 @@ def executar() -> int:
             produto.criado_em = datetime.now() - timedelta(days=dias)
             s.flush()
 
+            # A Segurança aprova primeiro; depois as outras áreas.
             if marcador == "completo":
-                etapas = ["MEIO_AMBIENTE", "SAUDE", "SEGURANCA",
+                etapas = ["SEGURANCA", "MEIO_AMBIENTE", "SAUDE",
                           "QUIMICO_RESPONSAVEL", "APROVADOR_FINAL"]
             elif marcador == "parcial":
-                etapas = ["MEIO_AMBIENTE", "SEGURANCA"]
+                etapas = ["SEGURANCA", "MEIO_AMBIENTE"]
             else:
                 etapas = []
 
             for etapa in etapas:
+                quem = aprovadores[etapa]
+                if etapa == "SEGURANCA" and produto.tecnico_seguranca:
+                    quem = produto.tecnico_seguranca
                 servicos.registrar_decisao(
-                    s, produto, aprovadores[etapa], "APROVADO",
+                    s, produto, quem, "APROVADO",
                     PARECERES[etapa], area=etapa,
                 )
             criados += 1

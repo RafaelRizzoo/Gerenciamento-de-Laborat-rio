@@ -205,6 +205,17 @@ REGRAS = [
        "{0} - datos de identificación, aplicación y control"),
     _r(r"^Editar item - (.+)$", "Edit item - {0}", "Editar artículo - {0}"),
     _r(r"^Item do (.+)$", "Item of {0}", "Artículo de {0}"),
+    # Técnico de Segurança --------------------------------------------------
+    _r(r"^Aguardando análise de (.+)$", "Awaiting review by {0}", "En espera de análisis de {0}"),
+    _r(r"^Segurança \((.+)\)$", "Safety ({0})", "Seguridad ({0})"),
+    _r(r"^A solicitação está com o técnico de Segurança da área: (.+)\. Só ele a recebe agora\.$",
+       "The request is with the area's Safety technician: {0}. Only they receive it now.",
+       "La solicitud está con el técnico de Seguridad del área: {0}. Solo él la recibe ahora."),
+    _r(r"^Técnico de Segurança alterado para (.+)\.$",
+       "Safety technician changed to {0}.", "Técnico de Seguridad cambiado a {0}."),
+    _r(r"^O técnico (.+) ainda não tem login no sistema\. Peça ao administrador para cadastrá-lo em Aprovações\.$",
+       "Technician {0} does not have a login yet. Ask the administrator to register them under Approvals.",
+       "El técnico {0} aún no tiene acceso al sistema. Pida al administrador que lo registre en Aprobaciones."),
     # Validade -------------------------------------------------------------
     _r(r"^vence em (.+) \(faltam (\d+) dias\)$",
        "expires on {0} ({1} days left)", "vence el {0} (faltan {1} días)"),
@@ -298,6 +309,13 @@ EXTRAS = {
 
 
 # --------------------------------------------------------------- Tradução
+def _conhecido(texto: str) -> bool:
+    """Há tradução para este pedaço (no dicionário ou por uma regra)?"""
+    if texto in TEXTOS or texto in EXTRAS:
+        return True
+    return any(padrao.match(texto) for padrao, _m, _g in REGRAS)
+
+
 def t(texto: str, idioma: str | None = None) -> str:
     """Traduz um texto solto. Devolve o original quando não há tradução."""
     idioma = idioma or atual()
@@ -327,9 +345,8 @@ def t(texto: str, idioma: str | None = None) -> str:
     # quando TODOS os pedaços são conhecidos, para não mexer em texto de FDS.
     if ", " in miolo:
         partes = miolo.split(", ")
-        traduzidas = [(TEXTOS.get(p) or EXTRAS.get(p) or {}).get(idioma) for p in partes]
-        if all(traduzidas):
-            return esquerda + ", ".join(traduzidas) + direita
+        if all(_conhecido(p) for p in partes):
+            return esquerda + ", ".join(t(p, idioma) for p in partes) + direita
 
     return texto
 

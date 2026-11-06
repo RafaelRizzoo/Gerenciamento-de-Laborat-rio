@@ -10,6 +10,7 @@
 =====================================================================
 """
 
+import json
 import re
 import secrets
 from datetime import date, datetime
@@ -54,6 +55,8 @@ from models import (
     TIPOS_MIDIA,
     STATUS,
     STATUS_ABERTOS,
+    TECNICO_POR_AREA,
+    TECNICOS_SEGURANCA,
     TIPOS_DOCUMENTO,
     TIPOS_PRODUTO,
     UNIDADES_CONSUMO,
@@ -69,6 +72,7 @@ from models import (
     RecursoArquivo,
     Usuario,
     par_valido,
+    tecnico_da_area,
 )
 from security import gerar_hash, verificar_senha
 
@@ -838,6 +842,67 @@ async def post(req):
     )
 
 
+def _campo_tecnico_seguranca(unidade: str, area: str, escolhido: str = ""):
+    """Técnico de Segurança responsável, definido pela unidade e pela área.
+
+    Com responsável fixo, o campo vem preenchido e bloqueado. Sem (hoje só
+    Rio das Ostras), o solicitante escolhe na lista. A tela acompanha a
+    escolha de unidade e área sem recarregar; o servidor, de qualquer forma,
+    refaz a conta no envio e não confia no que o navegador mandou.
+    """
+    fixo = tecnico_da_area(unidade, area)
+    conhecido = (unidade or "", area or "") in TECNICO_POR_AREA
+    if fixo:
+        estado, valor = "fixo", fixo
+    elif conhecido:
+        estado, valor = "manual", escolhido
+    else:
+        estado, valor = "vazio", ""
+
+    mapa = {f"{u}|{a}": (n or "") for (u, a), n in TECNICO_POR_AREA.items()}
+    script = (
+        "(function(){var m=" + json.dumps(mapa, ensure_ascii=False) + ";"
+        "var u=document.querySelector('[name=unidade_solicitante]'),"
+        "a=document.querySelector('[name=area_solicitante]'),"
+        "s=document.getElementById('tecnico-seguranca');"
+        "if(!u||!a||!s)return;"
+        "function ajuda(e){['vazio','fixo','manual'].forEach(function(x){"
+        "var el=document.getElementById('ajuda-tec-'+x);"
+        "if(el)el.style.display=(x===e)?'':'none';});}"
+        "function atualizar(){var k=u.value+'|'+a.value,e='vazio',n='';"
+        "if(u.value&&a.value&&(k in m)){n=m[k];e=n?'fixo':'manual';}"
+        "s.disabled=(e!=='manual');s.required=(e==='manual');"
+        "if(e==='fixo')s.value=n;else if(e==='vazio')s.value='';"
+        "ajuda(e);}"
+        "u.addEventListener('change',atualizar);"
+        "a.addEventListener('change',atualizar);atualizar();})();"
+    )
+    ajudas = {
+        "vazio": "Definido pela unidade e pela área escolhidas acima.",
+        "fixo": "Responsável pela área escolhida. Não pode ser alterado.",
+        "manual": "Esta área não tem responsável definido. Escolha o técnico de Segurança.",
+    }
+    return Div(
+        Label(
+            Span("Técnico de Segurança responsável", Span(" *", cls="obr"), cls="rot"),
+            Select(
+                Option("Selecione...", value="", selected=not valor),
+                *[Option(n, value=n, selected=(n == valor)) for n in TECNICOS_SEGURANCA],
+                id="tecnico-seguranca", name="tecnico_seguranca",
+                disabled=(estado in ("fixo", "vazio")),
+                required=(estado == "manual"),
+            ),
+            *[
+                Span(texto, id=f"ajuda-tec-{chave}", cls="ajuda",
+                     style=None if chave == estado else "display:none")
+                for chave, texto in ajudas.items()
+            ],
+            cls="campo",
+        ),
+        Script(NotStr(script)),
+    )
+
+
 def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                             aviso=None, erro=None):
     """Passo 2: formulário com o que a FDS forneceu, para conferir e completar."""
@@ -959,6 +1024,11 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                          ajuda="Escolha uma área da unidade selecionada ao lado."),
                 cls="linha-form",
             ),
+            _campo_tecnico_seguranca(
+                dados.get("unidade_solicitante", ""),
+                dados.get("area_solicitante", ""),
+                dados.get("tecnico_seguranca", ""),
+            ),
             ui.campo(
                 "Finalidade de uso", "aplicacao", valor=dados.get("aplicacao", ""),
                 linhas=3, obrigatório=True,
@@ -1070,7 +1140,7 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
             Button("Enviar para aprovação", cls="btn verde", type="submit"),
             A("Trocar a FDS", href="/solicitacoes/nova", cls="btn secundario"),
             Span(
-                "Ao enviar, a solicitação segue para Meio Ambiente.",
+                "Ao enviar, a solicitação segue para o técnico de Segurança da área.",
                 cls="pequeno texto-mudo direita",
             ),
             cls="barra-acoes",
@@ -1257,6 +1327,18 @@ async def post(req, sess):
     dados["cas"] = cas
     dados["numero_cas"] = cas[0]
 
+    # Técnico de Segurança: área com responsável fixo manda; as demais pedem
+    # a escolha do solicitante.
+    tecnico = tecnico_da_area(unidade_solicitante, dados.get("area_solicitante"))
+    if not tecnico:
+        tecnico = (dados.get("tecnico_seguranca") or "").strip()
+        if tecnico not in TECNICOS_SEGURANCA:
+            return voltar(
+                "Escolha o técnico de Segurança responsável por esta área."
+            )
+    dados["tecnico_seguranca"] = tecnico
+    dados["unidade_solicitante"] = unidade_solicitante
+
     dados["fabricas"] = [unidade_solicitante]
     dados["setor_solicitante"] = dados.get("area_solicitante")
     dados["riscos"] = riscos
@@ -1293,6 +1375,11 @@ async def post(req, sess):
         # para cadastrar em nome de um colega que não tem acesso ao sistema.
         # Quem não mexeu no campo cai no próprio cadastro de qualquer forma,
         # porque ele vem preenchido com os dados de quem entrou.
+        if not servicos.tecnico_por_nome(s, dados["tecnico_seguranca"]):
+            return voltar(
+                f"O técnico {dados['tecnico_seguranca']} ainda não tem login no "
+                "sistema. Peça ao administrador para cadastrá-lo em Aprovações."
+            )
         solicitante = servicos.obter_ou_criar_solicitante(
             s, dados.get("solicitante_nome"), dados.get("solicitante_email")
         )
@@ -1350,6 +1437,8 @@ def get(req, sess, pid: int):
         nome = produto.nome_comercial
         fabricante = produto.fabricante or "-"
         email = produto.solicitante.email if produto.solicitante else ""
+        tecnico = produto.tecnico_seguranca.nome if produto.tecnico_seguranca else None
+        seguranca_primeiro = bool(produto.seguranca_primeiro)
 
     areas = ", ".join(rotulo for _, rotulo in AREAS_APROVACAO)
 
@@ -1372,11 +1461,20 @@ def get(req, sess, pid: int):
         Div(
             Div(H2("O que acontece agora"), cls="card-titulo"),
             Ol(
+                Li(B("Segurança primeiro. "),
+                   "A solicitação está com o técnico de Segurança da área"
+                   + (f": {tecnico}. " if tecnico else ". ")
+                   + "Só ele a recebe agora.")
+                if seguranca_primeiro else
                 Li(B("Análise das áreas. "),
                    f"A solicitação está com {areas} ao mesmo tempo - não há ordem "
                    "entre elas, cada uma dá o seu parecer quando puder."),
+                Li(B("Depois da Segurança. "),
+                   "Com a aprovação da Segurança, Meio Ambiente, Saúde e Químico "
+                   "Responsável analisam ao mesmo tempo.")
+                if seguranca_primeiro else None,
                 Li(B("Aprovador Final. "),
-                   "Concluídas as quatro áreas, a solicitação segue para o "
+                   "Concluídas as áreas, a solicitação segue para o "
                    "Aprovador Final, que fecha a aprovação."),
                 Li(B("Avisos. "),
                    "Você recebe um e-mail a cada parecer registrado e outro quando "
@@ -1480,14 +1578,14 @@ def _gaveta_novo_aprovador(areas_geridas: list):
     )
 
 
-def _tabela_solicitacoes(produtos, areas_usuario):
+def _tabela_solicitacoes(produtos, areas_usuario, usuario_id=None):
     """Tabela do módulo de aprovações, com as colunas que o aprovador precisa."""
     if not produtos:
         return ui.vazio("Nenhuma solicitação encontrada com esses filtros.", "☑")
     areas_usuario = list(areas_usuario or [])
     linhas = []
     for p in produtos:
-        minha = any(p.aguarda(area) for area in areas_usuario)
+        minha = any(p.aguarda_usuario(area, usuario_id) for area in areas_usuario)
         linhas.append(
             Tr(
                 Td(A(p.codigo_interno, href=f"/produtos/{p.id}"), cls="mono nowrap"),
@@ -1518,7 +1616,7 @@ def _tabela_solicitacoes(produtos, areas_usuario):
                     ui.badge(p.status),
                     Br(),
                     Span(
-                        ", ".join(p.areas_pendentes_labels) if p.aberta else "-",
+                        ", ".join(p.aguardando_labels) if p.aberta else "-",
                         cls="pequeno texto-mudo",
                     ),
                 ),
@@ -1544,6 +1642,37 @@ def _tabela_solicitacoes(produtos, areas_usuario):
     )
 
 
+@rt("/produtos/{pid:int}/tecnico-seguranca")
+async def post(req, pid: int):
+    """Administrador passa a análise de Segurança para outro técnico."""
+    barrado = exigir_papel(req, "ADMIN")
+    if barrado:
+        return barrado
+    usuario = eu(req)
+    form = await req.form()
+    try:
+        novo_id = int(form.get("tecnico_id") or 0)
+    except ValueError:
+        novo_id = 0
+    with db_session() as s:
+        produto = s.get(Produto, pid)
+        novo = s.get(Usuario, novo_id) if novo_id else None
+        if not produto or not novo:
+            return RedirectResponse(
+                _msg(f"/produtos/{pid}", "erro", "Escolha um técnico válido."),
+                status_code=303,
+            )
+        try:
+            servicos.trocar_tecnico_seguranca(s, produto, novo, s.get(Usuario, usuario.id))
+        except ValueError as exc:
+            return RedirectResponse(_msg(f"/produtos/{pid}", "erro", str(exc)),
+                                    status_code=303)
+    return RedirectResponse(
+        _msg(f"/produtos/{pid}", "ok", f"Técnico de Segurança alterado para {novo.nome}."),
+        status_code=303,
+    )
+
+
 @rt("/aprovacoes")
 def get(req, sess, status: str = "", fabrica: str = "",
         de: str = "", ate: str = "", q: str = "", ok: str = "", erro: str = ""):
@@ -1554,20 +1683,29 @@ def get(req, sess, status: str = "", fabrica: str = "",
     usuario = eu(req)
 
     with db_session() as s:
-        # Todo aprovador vê todas as solicitações abertas; agir, só na sua etapa.
-        produtos = servicos.buscar_produtos(
-            s, q, status=status, fabrica=fabrica,
-            data_de=_data(de), data_ate=_data(ate),
-            somente_abertas=not status,
-            limite=None,
-        )
+        # Todo aprovador vê as solicitações abertas e age só na sua etapa. A
+        # exceção é o técnico de Segurança: ele não vê as solicitações que
+        # foram para o colega de outra área.
+        u_fila = s.get(Usuario, usuario.id)
+        produtos = [
+            p for p in servicos.buscar_produtos(
+                s, q, status=status, fabrica=fabrica,
+                data_de=_data(de), data_ate=_data(ate),
+                somente_abertas=not status,
+                limite=None,
+            )
+            if servicos.visivel_na_fila(s, u_fila, p)
+        ]
         contagem = {
             chave: sum(1 for p in produtos if p.status == chave)
             for chave in STATUS_ABERTOS
         }
         u_atual = s.get(Usuario, usuario.id)
         areas_usuario = servicos.areas_do_usuario(s, u_atual)
-        minhas = sum(1 for p in produtos if any(p.aguarda(a) for a in areas_usuario))
+        minhas = sum(
+            1 for p in produtos
+            if any(p.aguarda_usuario(a, usuario.id) for a in areas_usuario)
+        )
         # Quem pode cadastrar aprovador (gaveta lateral): Admin e Aprovador
         # Final cuidam de todas as áreas; um aprovador cuida apenas da própria.
         areas_geridas = servicos.areas_gerenciaveis(s, u_atual)
@@ -1659,7 +1797,7 @@ def get(req, sess, status: str = "", fabrica: str = "",
                 Span(f"{len(produtos)} registro(s)", cls="direita"),
                 cls="card-titulo",
             ),
-            _tabela_solicitacoes(produtos, areas_usuario),
+            _tabela_solicitacoes(produtos, areas_usuario, usuario.id),
             cls="card",
         ),
         _gaveta_novo_aprovador(areas_geridas),
@@ -3652,6 +3790,12 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
             [] if publico else servicos.areas_para_decidir(s, u_atual, produto)
         )
         pode = bool(areas_permitidas)
+        # Técnicos que podem assumir a Segurança (só o admin usa esta lista).
+        tecnicos_troca = (
+            servicos.aprovadores_da_area(s, "SEGURANCA")
+            if (not publico and usuario is not None and usuario.papel == "ADMIN")
+            else []
+        )
         # Na ordem da lista oficial, não na ordem em que foram marcados.
         epis_marcados = set(produto.epis_nomes)
         epis_obrigatorios = [e for e in EPIS if e in epis_marcados]
@@ -3700,8 +3844,12 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
             largo=True,
         ),
         ui.item_ficha("Processo em que é utilizado", produto.processo),
+        ui.item_ficha("Unidade solicitante", produto.unidade_da_solicitacao),
         ui.item_ficha("Área solicitante", produto.area_solicitante
                       or produto.setor_solicitante),
+        ui.item_ficha("Técnico de Segurança responsável",
+                      produto.tecnico_seguranca.nome
+                      if produto.tecnico_seguranca else None),
         ui.item_ficha("Forma de aplicação", produto.forma_aplicacao),
         ui.item_ficha("Prazo de utilização", produto.prazo_utilizacao),
         ui.item_ficha("Local de armazenamento", produto.local_armazenamento),
@@ -4033,6 +4181,39 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
     else:
         cartao_controle = None
 
+    # Só o administrador troca o técnico de Segurança de uma solicitação (por
+    # ausência ou férias), e só enquanto a Segurança ainda não deu parecer.
+    cartao_troca_tecnico = None
+    if (
+        not publico
+        and usuario is not None
+        and usuario.papel == "ADMIN"
+        and produto.aberta
+        and "SEGURANCA" in produto.areas_pendentes
+        and tecnicos_troca
+    ):
+        atual = produto.tecnico_seguranca
+        cartao_troca_tecnico = Div(
+            Div(H2("Técnico de Segurança"), cls="card-titulo"),
+            P(
+                "Em caso de ausência, passe a análise de Segurança para outro "
+                "técnico. A troca fica registrada no histórico.",
+                cls="texto-mudo pequeno",
+            ),
+            Form(
+                ui.campo(
+                    "Responsável", "tecnico_id",
+                    valor=str(atual.id) if atual else "",
+                    opcoes=[(str(u.id), u.nome) for u in tecnicos_troca],
+                    obrigatório=True,
+                ),
+                Div(Button("Trocar técnico", cls="btn", type="submit"), cls="barra-acoes"),
+                method="post",
+                action=f"/produtos/{produto.id}/tecnico-seguranca",
+            ),
+            cls="card",
+        )
+
     coluna_esq = Div(
         Div(Div(H2("Ficha do produto"), Span(ui.badge(produto.status), cls="direita"),
                 cls="card-titulo"), ficha, cls="card"),
@@ -4056,6 +4237,7 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
             cls="card",
         ),
         cartao_epi,
+        cartao_troca_tecnico,
         # O cartão só aparece para quem tem alguma área pendente nesta
         # solicitação. Encerrada, ou de área que não é a sua, nem é exibido.
         Div(
