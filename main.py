@@ -904,7 +904,6 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                     "Nome do solicitante", "solicitante_nome",
                     valor=dados.get("solicitante_nome", "")
                     or (usuario.nome if usuario else ""),
-                    obrigatório=True,
                     ajuda="Troque se estiver cadastrando para outra pessoa."
                     if usuario is not None else None,
                 ),
@@ -912,7 +911,6 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                     "E-mail do solicitante", "solicitante_email", "email",
                     dados.get("solicitante_email", "")
                     or (usuario.email if usuario else ""),
-                    True,
                 ),
                 cls="linha-form",
             ),
@@ -1007,12 +1005,6 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                      valor=dados.get("forma_aplicacao", ""),
                      opcoes=FORMAS_APLICACAO, obrigatório=True,
                      ajuda="Como o produto é aplicado no processo."),
-            ui.campo(
-                "Necessidade de uso", "necessidade_uso",
-                valor=dados.get("necessidade_uso", ""), linhas=3, obrigatório=True,
-                ajuda="Por que a planta precisa deste produto? O que deixa de ser "
-                      "feito (ou qual o risco) se ele não for aprovado?",
-            ),
             Div(
                 ui.campo("Prazo de utilização", "prazo_utilizacao",
                          valor=dados.get("prazo_utilizacao", ""), obrigatório=True,
@@ -1108,10 +1100,6 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
         Div(
             Button("Enviar para aprovação", cls="btn verde", type="submit"),
             A("Trocar a FDS", href="/solicitacoes/nova", cls="btn secundario"),
-            Span(
-                "Ao enviar, a solicitação aparece, na Segurança, só para este técnico.",
-                cls="pequeno texto-mudo direita",
-            ),
             cls="barra-acoes",
         ),
         method="post",
@@ -1210,7 +1198,6 @@ async def post(req, sess):
         ("area_solicitante", "Área solicitante"),
         ("aplicacao", "Finalidade de uso"),
         ("forma_aplicacao", "Forma de aplicação"),
-        ("necessidade_uso", "Necessidade de uso"),
         ("prazo_utilizacao", "Prazo de utilização"),
         ("consumo_estimado", "Quantidade prevista"),
         ("unidade", "Unidade de medida"),
@@ -1219,11 +1206,20 @@ async def post(req, sess):
         ("classificacao_ghs", "Classificação GHS"),
         ("observacoes", "Observações"),
     ]
-    obrigatorios = [
-        ("solicitante_nome", "Nome do solicitante"),
-        ("solicitante_email", "E-mail do solicitante"),
-    ] + obrigatorios
-    faltando = [rotulo for campo, rotulo in obrigatorios if not dados.get(campo)]
+    # O solicitante Tenaris pode ficar em branco quando a solicitação vem de
+    # uma empresa terceira. Nesse caso o terceiro e o gestor do contrato
+    # (que recebe os avisos) passam a ser obrigatórios.
+    sem_solicitante_tenaris = not (
+        dados.get("solicitante_nome") or dados.get("solicitante_email")
+    )
+    if sem_solicitante_tenaris:
+        obrigatorios = [
+            ("terceiro_nome", "Nome do solicitante terceiro"),
+            ("terceiro_empresa", "Empresa do terceiro"),
+            ("gestor_contrato", "Gestor Tenaris do contrato"),
+            ("gestor_email", "E-mail do gestor"),
+        ] + obrigatorios
+    faltando =[rotulo for campo, rotulo in obrigatorios if not dados.get(campo)]
     if unidade_solicitante not in UNIDADES:
         faltando.append("Unidade solicitante")
     if not riscos:
@@ -1276,7 +1272,7 @@ async def post(req, sess):
             "Produto inflamável: informe o ponto de fulgor (seção 9 da FDS)."
         )
 
-    if "@" not in (dados.get("solicitante_email") or ""):
+    if dados.get("solicitante_email") and "@" not in dados["solicitante_email"]:
         return voltar("Informe um e-mail corporativo válido.")
 
     if revisao > date.today():
@@ -1349,9 +1345,15 @@ async def post(req, sess):
                 f"O técnico {dados['tecnico_seguranca']} ainda não tem login no "
                 "sistema. Peça ao administrador para cadastrá-lo em Aprovações."
             )
-        solicitante = servicos.obter_ou_criar_solicitante(
-            s, dados.get("solicitante_nome"), dados.get("solicitante_email")
-        )
+        if sem_solicitante_tenaris:
+            # Pedido de terceiro: quem recebe os avisos é o gestor do contrato.
+            solicitante = servicos.obter_ou_criar_solicitante(
+                s, dados.get("gestor_contrato"), dados.get("gestor_email")
+            )
+        else:
+            solicitante = servicos.obter_ou_criar_solicitante(
+                s, dados.get("solicitante_nome"), dados.get("solicitante_email")
+            )
         produto = servicos.criar_solicitacao(s, dados, solicitante, arquivos)
         pid = produto.id
 
