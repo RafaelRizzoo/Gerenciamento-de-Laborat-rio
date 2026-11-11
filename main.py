@@ -52,6 +52,7 @@ from models import (
     SIM_NAO,
     SITUACOES_FDS,
     SITUACOES_FDS_FILTRO,
+    SITUACOES_FDS_TELA,
     TIPOS_MIDIA,
     STATUS,
     STATUS_ABERTOS,
@@ -418,10 +419,6 @@ async def post(req, sess):
 def get(req, erro: str = "", ok: str = ""):
     """Pagina inicial PUBLICA: hero de busca + atalhos para as areas do sistema."""
     usuario = eu(req)
-    with db_session() as s:
-        ind = servicos.indicadores(s)
-
-    aprovados = ind["por_status"].get("APROVADO", 0)
 
     atalhos = [
         ui.cartao_atalho(
@@ -457,40 +454,12 @@ def get(req, erro: str = "", ok: str = ""):
         ),
     ]
 
-    pendentes = sum(ind["por_status"].get(s, 0) for s in STATUS_ABERTOS)
-
-    indicadores_home = Div(
-        A(
-            Div("Produtos Aprovados", cls="rotulo"),
-            Div(str(aprovados), cls="valor"),
-            Div("liberados para uso", cls="nota"),
-            href="/produtos",
-            cls="kpi-inicio verde",
-        ),
-        A(
-            Div("Produtos Pendentes", cls="rotulo"),
-            Div(str(pendentes), cls="valor"),
-            Div("em análise pelas áreas", cls="nota"),
-            href="/aprovacoes",
-            cls="kpi-inicio ambar",
-        ),
-        A(
-            Div("Produtos Reprovados", cls="rotulo"),
-            Div(str(ind["por_status"].get("REPROVADO", 0)), cls="valor"),
-            Div("não liberados", cls="nota"),
-            href="/historico?status=REPROVADO",
-            cls="kpi-inicio vermelho",
-        ),
-        cls="painel-inicio",
-    )
-
     return ui.molde_simples(
         "Início",
         ui.hero(),
         Div(
             ui.alerta(erro, "erro") if erro else None,
             ui.alerta(ok, "sucesso") if ok else None,
-            indicadores_home,
             Div(*atalhos, cls="atalhos"),
             cls="faixa-atalhos",
         ),
@@ -4805,7 +4774,9 @@ def _cartao_fds(produto, publico: bool = False):
     """Um produto na página de FDS: identificação, situação e documentos."""
     situacao = produto.fds_situacao
     fds = produto.fds
-    docs = [d for d in produto.documentos if d.tipo in ("FDS", "FICHA_EMERGENCIA")]
+    # Só o PDF da FDS vigente aparece aqui; a Ficha de Emergência fica na
+    # "Ver ficha completa".
+    docs = [fds] if fds else []
 
     if fds:
         venc = fds.vencimento.strftime("%d/%m/%Y")
@@ -4871,7 +4842,7 @@ def _cartao_fds(produto, publico: bool = False):
                 ),
                 cls="fds-ident",
             ),
-            _pontos_semaforo(situacao),
+            _pontos_semaforo(situacao, SITUACOES_FDS_TELA.get(situacao)),
             cls="fds-topo",
         ),
         Div(*etiquetas, cls="fds-etiquetas") if etiquetas else None,
@@ -4885,7 +4856,8 @@ def _cartao_fds(produto, publico: bool = False):
     )
 
 
-def _filtros_fds(q, fabrica, area, tipo_produto, orgao, situacao):
+def _filtros_fds(q, fabrica, area, tipo_produto, orgao, situacao, fabricante="",
+                 fabricantes=()):
     return Form(
         Div(
             ui.campo(
@@ -4894,6 +4866,9 @@ def _filtros_fds(q, fabrica, area, tipo_produto, orgao, situacao):
             ),
             ui.campo("Unidade", "fabrica", valor=fabrica, opcoes=UNIDADES),
             ui.campo("Área", "area", valor=area, grupos=AREAS_POR_UNIDADE),
+            ui.campo(
+                "Fabricante", "fabricante", valor=fabricante, opcoes=list(fabricantes),
+            ),
             ui.campo("Tipo de produto", "tipo_produto", valor=tipo_produto, opcoes=TIPOS_PRODUTO),
             ui.campo(
                 "Produto controlado", "orgao", valor=orgao,
@@ -4909,7 +4884,7 @@ def _filtros_fds(q, fabrica, area, tipo_produto, orgao, situacao):
                 A("Limpar", href="/fds", cls="btn secundario"),
                 cls="acao",
             ),
-            cls="filtros",
+            cls="filtros filtros-linha",
         ),
         method="get",
         action="/fds",
@@ -4921,15 +4896,16 @@ FDS_POR_PAGINA = 10
 
 @rt("/fds")
 def get(req, q: str = "", fabrica: str = "", area: str = "", tipo_produto: str = "",
-        orgao: str = "", situacao: str = "", pagina: int = 1):
+        orgao: str = "", situacao: str = "", pagina: int = 1, fabricante: str = ""):
     """Repositório único de consulta das Fichas de Dados de Segurança."""
     usuario = eu(req)
     with db_session() as s:
+        fabricantes = servicos.fabricantes_aprovados(s)
         produtos = servicos.buscar_produtos(
             s, q, somente_aprovados=True, fabrica=fabrica, area=area,
-            tipo_produto=tipo_produto, orgao=orgao, limite=None,
+            tipo_produto=tipo_produto, orgao=orgao, fabricante=fabricante,
+            limite=None,
         )
-        resumo = servicos.resumo_fds(produtos)
         produtos = servicos.filtrar_por_situacao_fds(produtos, situacao)
         # O que exige acao aparece primeiro: vencidas, depois a vencer.
         ordem = {"VENCIDA": 0, "PROXIMA": 1, "SEM_FDS": 2, "VIGENTE": 3}
@@ -4964,18 +4940,6 @@ def get(req, q: str = "", fabrica: str = "", area: str = "", tipo_produto: str =
         cls="painel-inicio",
     )
 
-    alertas = []
-    if resumo["VENCIDA"]:
-        alertas.append(
-            ui.alerta(
-                Span(
-                    B(f"{resumo['VENCIDA']} produto(s) com FDS vencida. "),
-                    "A ficha precisa ser atualizada junto ao fabricante antes do uso.",
-                ),
-                "erro",
-            )
-        )
-
     # 10 por página: acima disso a tela vira um rolar sem fim.
     total = len(produtos)
     paginas = max(1, -(-total // FDS_POR_PAGINA))
@@ -4986,33 +4950,19 @@ def get(req, q: str = "", fabrica: str = "", area: str = "", tipo_produto: str =
     navegacao = ui.paginacao(
         pagina, total, FDS_POR_PAGINA, "/fds",
         {"q": q, "fabrica": fabrica, "area": area, "tipo_produto": tipo_produto,
-         "orgao": orgao, "situacao": situacao},
+         "orgao": orgao, "situacao": situacao, "fabricante": fabricante},
+        setas_curtas=True,
     )
 
     return ui.pagina(
         "Fichas de Dados de Segurança",
         painel,
-        Div(_filtros_fds(q, fabrica, area, tipo_produto, orgao, situacao), cls="card"),
-        *alertas,
         Div(
-            Div(
-                H2("Resultado da consulta"),
-                Span(
-                    f"{total} produto(s)" if paginas == 1
-                    else f"{total} produto(s) - página {pagina} de {paginas}",
-                    cls="direita",
-                ),
-                cls="card-titulo",
-            ),
-            P(
-                "Somente produtos aprovados aparecem aqui. A validade é contada a "
-                f"partir da data de revisão da ficha, com prazo de {FDS_VALIDADE_ANOS} "
-                f"anos e alerta nos últimos {FDS_ALERTA_MESES} meses.",
-                cls="pequeno texto-mudo",
-                style="margin:0",
-            ),
+            _filtros_fds(q, fabrica, area, tipo_produto, orgao, situacao,
+                         fabricante, fabricantes),
             cls="card",
         ),
+        H2("Resultado da consulta", cls="titulo-resultado"),
         *(cartoes if cartoes else [Div(ui.vazio("Nenhuma FDS encontrada com esses filtros.", "▣"), cls="card")]),
         navegacao,
         usuario=usuario,

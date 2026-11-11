@@ -801,6 +801,16 @@ def indicadores(sessao) -> dict:
     }
 
 
+def fabricantes_aprovados(sessao) -> list[str]:
+    """Nomes dos fabricantes dos produtos aprovados, em ordem alfabética."""
+    nomes = sessao.scalars(
+        select(Produto.fabricante)
+        .where(Produto.status == "APROVADO", Produto.fabricante.is_not(None))
+        .distinct()
+    )
+    return sorted({n.strip() for n in nomes if n and n.strip()}, key=str.casefold)
+
+
 def buscar_produtos(
     sessao,
     termo: str = "",
@@ -817,8 +827,11 @@ def buscar_produtos(
     data_ate: date | None = None,
     somente_abertas: bool = False,
     limite: int | None = 200,
+    fabricante: str = "",
 ):
     consulta = select(Produto)
+    if fabricante:
+        consulta = consulta.where(Produto.fabricante == fabricante)
     if termo:
         like = f"%{termo.strip()}%"
         consulta = consulta.where(

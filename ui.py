@@ -491,7 +491,8 @@ def linha_fluxo(produto, mostrar_parecer: bool = True):
     return Div(*blocos, cls="pareceres")
 
 
-def paginacao(pagina: int, total: int, por_pagina: int, url: str, filtros: dict):
+def paginacao(pagina: int, total: int, por_pagina: int, url: str, filtros: dict,
+              setas_curtas: bool = False):
     """Numerinhos de página (1 2 3 ...) com os filtros preservados no link.
 
     Devolve None quando tudo cabe numa página só, para não poluir a tela.
@@ -527,12 +528,13 @@ def paginacao(pagina: int, total: int, por_pagina: int, url: str, filtros: dict)
         )
         anterior = n
 
+    ant, prox = ("‹", "›") if setas_curtas else ("‹ Anterior", "Próxima ›")
     return Nav(
-        A("‹ Anterior", href=link(pagina - 1), cls="pag seta")
-        if pagina > 1 else Span("‹ Anterior", cls="pag seta desligada"),
+        A(ant, href=link(pagina - 1), cls="pag seta", aria_label="Página anterior")
+        if pagina > 1 else Span(ant, cls="pag seta desligada"),
         Div(*itens, cls="pag-numeros"),
-        A("Próxima ›", href=link(pagina + 1), cls="pag seta")
-        if pagina < paginas else Span("Próxima ›", cls="pag seta desligada"),
+        A(prox, href=link(pagina + 1), cls="pag seta", aria_label="Próxima página")
+        if pagina < paginas else Span(prox, cls="pag seta desligada"),
         cls="paginacao",
         aria_label="Paginação",
     )

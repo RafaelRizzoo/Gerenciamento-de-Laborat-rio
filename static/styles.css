@@ -266,6 +266,15 @@ fieldset.secao > legend {
 .filtros label.campo { margin-bottom: 0; flex: 1 1 170px; }
 .filtros .acao { flex: 0 0 auto; }
 
+/* Tela de FDS: os sete campos na mesma linha, botões logo abaixo. */
+.filtros.filtros-linha { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.filtros.filtros-linha label.campo { flex: none; min-width: 0; }
+.filtros.filtros-linha .acao { grid-column: 1 / -1; display: flex; gap: .5rem; }
+@media (max-width: 1100px) {
+  .filtros.filtros-linha { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+}
+.titulo-resultado { font-size: 1.1rem; margin: .4rem 0 0; }
+
 /* ------------------------------------------------------------ Alertas */
 .alerta {
   padding: .7rem .9rem; border-radius: var(--raio);

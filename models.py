@@ -387,8 +387,17 @@ SITUACOES_FDS = {
 # O filtro da tela não oferece "Sem FDS anexada": anexar a FDS é o passo 1 do
 # cadastro, então nenhuma solicitação nova chega sem ela. O estado continua
 # existindo para rotular registros antigos.
+# Na tela de FDS os três estados usam os mesmos nomes dos cartões do topo
+# (Produtos Aprovados / Pendentes / Reprovados), no filtro e na bolinha.
+SITUACOES_FDS_TELA = {
+    "VIGENTE": "Produtos Aprovados",
+    "PROXIMA": "Produtos Pendentes",
+    "VENCIDA": "Produtos Reprovados",
+    "SEM_FDS": "Sem FDS anexada",
+}
+
 SITUACOES_FDS_FILTRO = {
-    chave: rotulo for chave, rotulo in SITUACOES_FDS.items() if chave != "SEM_FDS"
+    chave: rotulo for chave, rotulo in SITUACOES_FDS_TELA.items() if chave != "SEM_FDS"
 }
 
 
