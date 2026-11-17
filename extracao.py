@@ -647,9 +647,15 @@ def extrair_tipo_produto(nome: str = "", uso: str = "", texto: str = "") -> str:
     # para decidir pelo texto, então fica para o solicitante escolher.
     # A ordem importa: o primeiro tipo com pista no texto vence.
     pistas = {
+        # reagentes e soluções-padrão primeiro: "reagente para cloro livre" é de
+        # laboratório, mesmo falando de água.
+        "Produtos de laboratório - ácidos, bases e sais": [
+            "tampao", "solucao padrao", "reagente", "padrao de ph", "aluminato",
+        ],
         "Tratamento de água e efluentes": [
             "tratamento de agua", "tratamento de efluente", "coagulante",
-            "floculante", "biocida", "antiincrustante",
+            "floculante", "biocida", "antiincrustante", "policloreto",
+            "hipoclorito", "chemtreat", "lipesa", "consumo humano",
         ],
         "Tintas e revestimentos": ["tinta", "verniz", "revestimento", "primer", "esmalte"],
         "Adesivos e selantes": ["adesivo", "selante", "silicone", "cola "],
@@ -663,10 +669,10 @@ def extrair_tipo_produto(nome: str = "", uso: str = "", texto: str = "") -> str:
             "combustivel", "gasolina", "diesel", "querosene", "etanol",
         ],
         # "desengraxa" contém "graxa": precisa vir antes dos lubrificantes.
-        "Produtos de limpeza - áreas industrial": ["desengraxa"],
+        "Produtos de limpeza - áreas industrial": ["desengraxa", "homy ht"],
         "Graxa e oleos Lubrificantes": [
             "lubrific", "graxa", "oleo de corte", "oleo hidr", "fluido hidr",
-            "hidraulic", "emuls", "soluvel de corte",
+            "hidraulic", "emuls", "soluvel de corte", "fluido de corte", "hocut",
         ],
         "Solventes e diluentes": [
             "solvente", "thinner", "diluente", "acetona", "alcool",
@@ -704,6 +710,89 @@ def _secao(texto: str, numero: int) -> str:
 
 
 # ---------------------------------------------------------------------
+# Refino: limpeza do que as fichas reais trazem de lixo junto do valor
+# ---------------------------------------------------------------------
+# Aprendido com um lote de 19 FDS reais (ETE de Pinda): o rótulo seguinte
+# nem sempre é um terminador conhecido, e o nome chega com "Data: 05/06/25",
+# "Código Interno do Produto: ..." ou "Outros meios de identificação: ..."
+# colados, ou chega como um código ("201008-01").
+
+_CORTE_NOME = re.compile(
+    r"\s+(?:Data\b|C[óo]digo\b|Outros?\s+meios|Vers[ãa]o\b|Revis[ãa]o\b|"
+    r"Ref(?:er[êe]ncia)?\b\.?|Substitui|Em\s+conformidade|Página)",
+    re.IGNORECASE,
+)
+_PREFIXO_ROTULO = re.compile(
+    r"^(?:nome(?:\s+d[ao]\s+(?:empresa|produto|fabricante))?|empresa|"
+    r"fabricante|raz[ãa]o\s+social)\s*:\s*",
+    re.IGNORECASE,
+)
+_EMPRESA_NO_TEXTO = re.compile(
+    r"([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][\w&.'\-]*(?:\s+[\w&.'\-]+){0,6}?"
+    r",?\s+(?:Ltda\.?|LTDA|S\.?\s?A\.?|S/A|Inc\.?|Indústria[^,.\n]{0,30}|"
+    r"Instruments|Chemical[^,.\n]{0,20}))"
+)
+
+
+def _limpar_nome(nome: str) -> str:
+    nome = _PREFIXO_ROTULO.sub("", nome or "").strip()
+    nome = _CORTE_NOME.split(nome)[0].strip(" -–:;,")
+    return nome
+
+
+def _nome_parece_lixo(nome: str) -> bool:
+    """Código solto, pedaço de frase ou curto demais para ser um nome."""
+    letras = sum(c.isalpha() for c in nome)
+    if letras < 4:
+        return True
+    if re.fullmatch(r"[\d\W_]+", nome):
+        return True
+    # começa no meio de uma palavra ("s Químicos Ltda")
+    return bool(re.match(r"^[a-zà-ú]\s", nome))
+
+
+def _nome_do_arquivo(arquivo: str) -> str:
+    base = re.sub(r"\.pdf$", "", arquivo or "", flags=re.IGNORECASE)
+    base = re.sub(r"^\s*(?:FDS|FISPQ)\b[\s\-–_.:]*", "", base, flags=re.IGNORECASE)
+    base = re.sub(r"^\s*ETE\b[\s\-–_.:]*", "", base, flags=re.IGNORECASE)
+    base = re.sub(r"[\s_]*(?:-|–)?\s*Rev\.?\s*\d+\s*$", "", base, flags=re.IGNORECASE)
+    return _limpar(re.sub(r"[_]+", " ", base), 120)
+
+
+def _limpar_fabricante(fab: str, texto: str) -> str:
+    fab = _PREFIXO_ROTULO.sub("", fab or "").strip()
+    suspeito = (
+        not fab
+        or re.match(r"^endere[çc]o\b", fab, re.IGNORECASE)
+        or "www." in fab.lower()
+        or len(re.findall(r"\d", fab)) > 6
+    )
+    if suspeito:
+        achado = _EMPRESA_NO_TEXTO.search(_plano(texto[:4000]))
+        if achado:
+            empresa = re.sub(
+                r"^(?:Nome\s+da\s+empresa\s+)?(?:Endere[çc]o\s+)?", "",
+                achado.group(1), flags=re.IGNORECASE,
+            )
+            return _limpar(empresa, 120)
+        return ""
+    return fab
+
+
+def _refinar_nome_e_fabricante(dados: dict, texto: str, nome_arquivo: str) -> None:
+    nome = _limpar_nome(dados.get("nome_comercial", ""))
+    tem_ph = re.compile(r"\bpH\s*\d", re.IGNORECASE)
+    if _nome_parece_lixo(nome):
+        nome = _nome_do_arquivo(nome_arquivo) or nome
+    elif tem_ph.search(nome_arquivo or "") and not tem_ph.search(nome):
+        # soluções tampão: o pH (4, 7, 9) só aparece no nome do arquivo e é o
+        # que distingue uma ficha da outra
+        nome = _nome_do_arquivo(nome_arquivo) or nome
+    dados["nome_comercial"] = nome
+    dados["fabricante"] = _limpar_fabricante(dados.get("fabricante", ""), texto)
+
+
+# ---------------------------------------------------------------------
 # Entrada pública
 # ---------------------------------------------------------------------
 
@@ -725,7 +814,7 @@ CAMPOS_AUTOMATICOS = (
 )
 
 
-def extrair(texto: str) -> dict:
+def extrair(texto: str, nome_arquivo: str = "") -> dict:
     """Extrai o que der do texto da FDS. Campos ausentes voltam vazios."""
     # A identificação pode estar na Seção 1 OU no cabeçalho da primeira página,
     # em tabela, antes de qualquer numeração de seção. Procuramos nos dois.
@@ -741,7 +830,7 @@ def extrair(texto: str) -> dict:
     # Sem pista clara, o tipo volta vazio para a pessoa escolher na lista.
     tipo = extrair_tipo_produto(nome, uso, texto)
 
-    return {
+    resultado = {
         "nome_comercial": nome,
         "fabricante": extrair_fabricante(texto) or _valor_apos_rotulo(
             secao1, _ROTULOS_FABRICANTE
@@ -760,9 +849,16 @@ def extrair(texto: str) -> dict:
         "ponto_fulgor": "" if _sem_informacao(fulgor) else fulgor,
         "data_revisao_fds": data.isoformat() if data else "",
     }
+    _refinar_nome_e_fabricante(resultado, texto, nome_arquivo)
+    if not resultado["tipo_produto"]:
+        # o nome limpo (e o do arquivo) dão pistas melhores que o texto cru
+        resultado["tipo_produto"] = extrair_tipo_produto(
+            f"{resultado['nome_comercial']} {nome_arquivo}", uso, texto
+        )
+    return resultado
 
 
-def extrair_de_pdf(conteudo: bytes) -> tuple[dict, list[str], str | None]:
+def extrair_de_pdf(conteudo: bytes, nome_arquivo: str = "") -> tuple[dict, list[str], str | None]:
     """Lê o PDF e extrai os dados.
 
     Devolve (dados, campos_preenchidos, aviso). `aviso` vem preenchido quando
@@ -778,7 +874,7 @@ def extrair_de_pdf(conteudo: bytes) -> tuple[dict, list[str], str | None]:
             "escaneado (imagem). Preencha os campos manualmente e, se possível, "
             "peça ao fabricante a FDS em PDF digital.",
         )
-    dados = extrair(texto)
+    dados = extrair(texto, nome_arquivo)
     preenchidos = [c for c in CAMPOS_AUTOMATICOS if dados.get(c)]
     aviso = None
     if len(preenchidos) <= 1:

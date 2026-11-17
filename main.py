@@ -808,7 +808,7 @@ async def post(req):
             status_code=303,
         )
 
-    dados, preenchidos, aviso = extracao.extrair_de_pdf(conteudo)
+    dados, preenchidos, aviso = extracao.extrair_de_pdf(conteudo, enviado.filename or "")
     token = _guardar_rascunho(
         conteudo, enviado.filename, getattr(enviado, "content_type", None)
     )
