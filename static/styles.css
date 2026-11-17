@@ -592,11 +592,11 @@ fieldset.secao > legend {
 .atalhos {
   display: flex; flex-wrap: wrap; gap: 1.15rem; justify-content: center;
 }
-/* 3 colunas: com 6 cartoes fecha 3+3 sem sobra. Para voltar a 4 por linha,
-   troque o divisor 3 -> 4 e o multiplicador 2 -> 3 na linha abaixo. */
-.atalhos > .atalho { flex: 0 1 calc((100% - 2 * 1.15rem) / 3); min-width: 0; }
+/* 4 por linha, e a última linha estica para ocupar a largura toda: com 7
+   cartões fica 4+3, sem sobra isolada nem vão (vale para qualquer quantidade). */
+.atalhos > .atalho { flex: 1 1 calc((100% - 3 * 1.15rem) / 4); min-width: 0; }
 @media (max-width: 1150px) {
-  .atalhos > .atalho { flex: 0 1 calc((100% - 1.15rem) / 2); }
+  .atalhos > .atalho { flex: 1 1 calc((100% - 1.15rem) / 2); }
 }
 @media (max-width: 620px) {
   .atalhos > .atalho { flex: 1 1 100%; }
