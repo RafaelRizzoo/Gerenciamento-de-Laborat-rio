@@ -738,9 +738,8 @@ def extrair(texto: str) -> dict:
     fulgor = extrair_ponto_fulgor(texto)
 
     categoria = extrair_categoria(nome, uso, texto)
+    # Sem pista clara, o tipo volta vazio para a pessoa escolher na lista.
     tipo = extrair_tipo_produto(nome, uso, texto)
-    if not tipo and categoria:
-        tipo = "Outros"  # a lista de tipos é curta; "Outros" é o honesto aqui
 
     return {
         "nome_comercial": nome,
