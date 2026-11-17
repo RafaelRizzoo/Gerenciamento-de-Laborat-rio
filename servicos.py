@@ -806,17 +806,16 @@ def indicadores(sessao) -> dict:
     }
 
 
-def fabricantes_aprovados(sessao) -> list[str]:
-    """Nomes dos fabricantes dos produtos aprovados, em ordem alfabética."""
-    nomes = sessao.scalars(
-        select(Produto.fabricante)
-        .where(
-            (Produto.status == "APROVADO") | (Produto.em_renovacao.is_(True)),
-            Produto.fabricante.is_not(None),
-        )
+def solicitantes_com_fds(sessao) -> list[tuple[str, str]]:
+    """Quem pediu o cadastro dos produtos que aparecem na consulta de FDS,
+    como (id, nome), em ordem alfabética."""
+    linhas = sessao.execute(
+        select(Usuario.id, Usuario.nome)
+        .join(Produto, Produto.solicitante_id == Usuario.id)
+        .where((Produto.status == "APROVADO") | (Produto.em_renovacao.is_(True)))
         .distinct()
-    )
-    return sorted({n.strip() for n in nomes if n and n.strip()}, key=str.casefold)
+    ).all()
+    return sorted(((str(i), n) for i, n in linhas), key=lambda x: x[1].casefold())
 
 
 def buscar_produtos(

@@ -4994,8 +4994,8 @@ def _cartao_fds(produto, publico: bool = False):
     )
 
 
-def _filtros_fds(q, fabrica, area, tipo_produto, orgao, situacao, fabricante="",
-                 fabricantes=()):
+def _filtros_fds(q, fabrica, area, tipo_produto, orgao, situacao, solicitante="",
+                 solicitantes=()):
     return Form(
         Div(
             ui.campo(
@@ -5005,7 +5005,8 @@ def _filtros_fds(q, fabrica, area, tipo_produto, orgao, situacao, fabricante="",
             ui.campo("Unidade", "fabrica", valor=fabrica, opcoes=UNIDADES),
             ui.campo("Área", "area", valor=area, grupos=AREAS_POR_UNIDADE),
             ui.campo(
-                "Fabricante", "fabricante", valor=fabricante, opcoes=list(fabricantes),
+                "Solicitante", "solicitante", valor=solicitante,
+                opcoes=list(solicitantes),
             ),
             ui.campo("Tipo de produto", "tipo_produto", valor=tipo_produto, opcoes=TIPOS_PRODUTO),
             ui.campo(
@@ -5034,14 +5035,15 @@ FDS_POR_PAGINA = 10
 
 @rt("/fds")
 def get(req, q: str = "", fabrica: str = "", area: str = "", tipo_produto: str = "",
-        orgao: str = "", situacao: str = "", pagina: int = 1, fabricante: str = ""):
+        orgao: str = "", situacao: str = "", pagina: int = 1, solicitante: str = ""):
     """Repositório único de consulta das Fichas de Dados de Segurança."""
     usuario = eu(req)
     with db_session() as s:
-        fabricantes = servicos.fabricantes_aprovados(s)
+        solicitantes = servicos.solicitantes_com_fds(s)
         produtos = servicos.buscar_produtos(
             s, q, somente_aprovados=True, fabrica=fabrica, area=area,
-            tipo_produto=tipo_produto, orgao=orgao, fabricante=fabricante,
+            tipo_produto=tipo_produto, orgao=orgao,
+            solicitante_id=int(solicitante) if solicitante.isdigit() else None,
             limite=None,
         )
         produtos = servicos.filtrar_por_situacao_fds(produtos, situacao)
@@ -5088,7 +5090,7 @@ def get(req, q: str = "", fabrica: str = "", area: str = "", tipo_produto: str =
     navegacao = ui.paginacao(
         pagina, total, FDS_POR_PAGINA, "/fds",
         {"q": q, "fabrica": fabrica, "area": area, "tipo_produto": tipo_produto,
-         "orgao": orgao, "situacao": situacao, "fabricante": fabricante},
+         "orgao": orgao, "situacao": situacao, "solicitante": solicitante},
         setas_curtas=True,
     )
 
@@ -5097,7 +5099,7 @@ def get(req, q: str = "", fabrica: str = "", area: str = "", tipo_produto: str =
         painel,
         Div(
             _filtros_fds(q, fabrica, area, tipo_produto, orgao, situacao,
-                         fabricante, fabricantes),
+                         solicitante, solicitantes),
             cls="card",
         ),
         H2("Resultado da consulta", cls="titulo-resultado"),
