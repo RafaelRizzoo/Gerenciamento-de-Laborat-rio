@@ -40,7 +40,7 @@ EXEMPLOS = [
         "fabricante": "SUALL Indústria e Comércio Ltda",
         "cas": ["7446-70-0", "7732-18-5"],
         "nome_tecnico": "Cloreto de alumínio em solução",
-        "tipo_produto": "Outros",
+        "tipo_produto": "Tratamento de água e efluentes",
         "categoria": "Aditivo de processo",
         "estado_fisico": "Líquido",
         "aplicacao": "Tratamento de água, esgotos domésticos e efluentes industriais.",
@@ -85,7 +85,7 @@ EXEMPLOS = [
         "fabricante": "Qualycril Soluções para a Construção Civil Ltda",
         "cas": ["108-88-3", "1330-20-7", "13463-67-7"],
         "nome_tecnico": "Tinta acrílica para demarcação viária",
-        "tipo_produto": "Outros",
+        "tipo_produto": "Tintas e revestimentos",
         "categoria": "Tinta / Revestimento",
         "estado_fisico": "Líquido",
         "aplicacao": "Indicado para demarcação viária horizontal.",
@@ -93,7 +93,7 @@ EXEMPLOS = [
             "Repintura da sinalização de piso das rotas de pedestres e do "
             "trânsito de empilhadeiras, hoje apagada em boa parte da nave 3."
         ),
-        "forma_aplicacao": "Pulverização / Spray",
+        "forma_aplicacao": "Pulverização",
         "area_solicitante": "Manutenção - Oficina",
         "setor_solicitante": "Manutenção",
         "prazo_utilizacao": "Até 6 Meses",
@@ -132,7 +132,7 @@ EXEMPLOS = [
         "fabricante": "ChemoNE - Industrial Química do Nordeste EIRELI",
         "cas": ["56073-10-0"],
         "nome_tecnico": "Isca rodenticida granulada",
-        "tipo_produto": "Outros",
+        "tipo_produto": "Produtos de limpeza - áreas comuns",
         "categoria": "Outros",
         "estado_fisico": "Sólido",
         "aplicacao": "Controle de roedores.",
@@ -140,7 +140,7 @@ EXEMPLOS = [
             "Controle de roedores no almoxarifado e nas galerias de cabos, onde "
             "houve dano a isolamento elétrico no último trimestre."
         ),
-        "forma_aplicacao": "Aplicação por Terceiros",
+        "forma_aplicacao": "Outros",
         "area_solicitante": "Manutenção - Almoxarifado",
         "setor_solicitante": "Manutenção",
         "prazo_utilizacao": "Até 1 Ano",

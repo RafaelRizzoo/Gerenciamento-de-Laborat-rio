@@ -57,17 +57,30 @@ UNIDADE_ANTIGA = {
 # valor = valor novo. O que não estiver aqui fica como está e aparece na tela
 # marcado como "(valor atual)".
 VOCABULARIO_ANTIGO = {
+    # Lista de tipos trocada em 11/2026. "Limpeza" e "Outros" não têm par
+    # único na lista nova (áreas comuns x industrial; "Outros" deixou de
+    # existir): ficam como estão, marcados "(valor atual)", para o
+    # solicitante ou o administrador escolherem.
     "tipo_produto": {
-        "Lubrificante": "Óleo Lubrificante",
-        "Hidráulico": "Óleo Hidráulico",
+        "Lubrificante": "Graxa e oleos Lubrificantes",
+        "Óleo Lubrificante": "Graxa e oleos Lubrificantes",
+        "Hidráulico": "Graxa e oleos Lubrificantes",
+        "Óleo Hidráulico": "Graxa e oleos Lubrificantes",
+        "Emulsão": "Graxa e oleos Lubrificantes",
+        "Solvente": "Solventes e diluentes",
     },
+    # Lista trocada em 11/2026. "Aplicação por Terceiros" saiu e não tem par:
+    # fica como está, marcada "(valor atual)", para escolha manual.
     "forma_aplicacao": {
-        "Manual (pincel, pano, rolo)": "Aplicação Manual (Pano, Pincel ou Rolo)",
-        "Pulverização / spray": "Pulverização / Spray",
+        "Manual (pincel, pano, rolo)": "Aplicação Manual",
+        "Aplicação Manual (Pano, Pincel ou Rolo)": "Aplicação Manual",
+        "Pulverização / spray": "Pulverização",
+        "Pulverização / Spray": "Pulverização",
         "Dosagem automática": "Dosagem Automática",
         "Circulação em sistema fechado": "Circulação em Sistema Fechado",
-        "Mistura em tanque": "Mistura ou Diluição em Tanque",
-        "Aplicação por terceiro": "Aplicação por Terceiros",
+        "Mistura em tanque": "Mistura ou Diluição",
+        "Mistura ou Diluição em Tanque": "Mistura ou Diluição",
+        "Transferência entre Recipientes": "Transferência",
     },
     "prazo_utilizacao": {
         "Uso único / pontual": "Uso Único",

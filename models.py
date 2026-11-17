@@ -166,12 +166,19 @@ UNIDADES = [
 
 # Tipo de produto: categoria principal usada no cadastro e no filtro de FDS.
 TIPOS_PRODUTO = [
-    "Óleo Lubrificante",
-    "Óleo Hidráulico",
-    "Emulsão",
-    "Limpeza",
-    "Solvente",
-    "Outros",
+    "Graxa e oleos Lubrificantes",
+    "Combustíveis e derivados",
+    "Tintas e revestimentos",
+    "Solventes e diluentes",
+    "Produtos de limpeza - áreas comuns",
+    "Produtos de limpeza - áreas industrial",
+    "Adesivos e selantes",
+    "Produtos para soldagem",
+    "Preparação de superfície",
+    "Tratamento de água e efluentes",
+    "Produtos de laboratório - ácidos, bases e sais",
+    "Gases industriais e analíticos",
+    "Produtos para construção civil",
 ]
 
 # Área da planta responsável pela utilização do produto, dentro de cada
@@ -325,14 +332,13 @@ def email_provisorio_tecnico(nome: str) -> str:
 # Como o produto é aplicado na planta. Padronizado para dar para filtrar
 # depois ("me mostre tudo o que é aplicado por pulverização").
 FORMAS_APLICACAO = [
-    "Aplicação Manual (Pano, Pincel ou Rolo)",
-    "Pulverização / Spray",
+    "Aplicação Manual",
+    "Pulverização",
     "Imersão",
     "Dosagem Automática",
     "Circulação em Sistema Fechado",
-    "Mistura ou Diluição em Tanque",
-    "Aplicação por Terceiros",
-    "Transferência entre Recipientes",
+    "Mistura ou Diluição",
+    "Transferência",
     "Limpeza e Higienização",
     "Outros",
 ]

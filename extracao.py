@@ -30,7 +30,7 @@ import io
 import re
 from datetime import date
 
-from models import CLASSES_RISCO, TIPOS_PRODUTO
+from models import CLASSES_RISCO, TIPOS_PRODUTO, sem_acento
 
 # ---------------------------------------------------------------------
 # Leitura do PDF
@@ -642,18 +642,41 @@ def extrair_categoria(nome: str = "", uso: str = "", texto: str = "") -> str:
 
 def extrair_tipo_produto(nome: str = "", uso: str = "", texto: str = "") -> str:
     """Tipo de produto provável, pelo nome e pelo uso recomendado."""
-    trecho = _plano(f"{nome} {uso} {texto[:1500]}").lower()
+    trecho = sem_acento(_plano(f"{nome} {uso} {texto[:1500]}")).lower()
+    # Só pistas inequívocas; a limpeza de áreas comuns x industrial não dá
+    # para decidir pelo texto, então fica para o solicitante escolher.
+    # A ordem importa: o primeiro tipo com pista no texto vence.
     pistas = {
-        "Hidráulico": ["fluido hidr", "óleo hidr", "oleo hidr", "hidráulic"],
-        "Emulsão": ["emuls", "solúvel de corte", "soluvel de corte"],
-        "Lubrificante": ["lubrific", "graxa", "óleo de corte", "oleo de corte"],
-        "Limpeza": ["desengraxa", "detergente", "limpeza", "sabão", "sabao"],
-        "Solvente": ["solvente", "thinner", "diluente", "acetona", "álcool", "alcool"],
+        "Tratamento de água e efluentes": [
+            "tratamento de agua", "tratamento de efluente", "coagulante",
+            "floculante", "biocida", "antiincrustante",
+        ],
+        "Tintas e revestimentos": ["tinta", "verniz", "revestimento", "primer", "esmalte"],
+        "Adesivos e selantes": ["adesivo", "selante", "silicone", "cola "],
+        "Produtos para soldagem": ["soldagem", "eletrodo", "solda "],
+        "Gases industriais e analíticos": [
+            "gas comprimido", "gases industriais", "oxigenio", "nitrogenio",
+            "argonio", "acetileno",
+        ],
+        "Produtos para construção civil": ["cimento", "argamassa", "concreto", "rejunte"],
+        "Combustíveis e derivados": [
+            "combustivel", "gasolina", "diesel", "querosene", "etanol",
+        ],
+        # "desengraxa" contém "graxa": precisa vir antes dos lubrificantes.
+        "Produtos de limpeza - áreas industrial": ["desengraxa"],
+        "Graxa e oleos Lubrificantes": [
+            "lubrific", "graxa", "oleo de corte", "oleo hidr", "fluido hidr",
+            "hidraulic", "emuls", "soluvel de corte",
+        ],
+        "Solventes e diluentes": [
+            "solvente", "thinner", "diluente", "acetona", "alcool",
+        ],
     }
-    for tipo in TIPOS_PRODUTO:
-        for pista in pistas.get(tipo, []):
-            if pista in trecho:
-                return tipo
+    for tipo, termos in pistas.items():
+        if tipo not in TIPOS_PRODUTO:
+            continue
+        if any(termo in trecho for termo in termos):
+            return tipo
     return ""
 
 

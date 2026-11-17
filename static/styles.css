@@ -249,6 +249,16 @@ input:focus, select:focus, textarea:focus {
 textarea { min-height: 88px; resize: vertical; }
 input[type=file] { padding: .38rem; background: var(--cinza-fundo); }
 .linha-form { display: grid; gap: 0 1rem; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+/* Formulário de cadastro: colunas fixas, para nenhuma linha ficar com vão. */
+.linha-dupla { display: grid; gap: 0 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.linha-form.linha-tres { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.coluna-form { display: flex; flex-direction: column; min-width: 0; }
+.linha-dupla > label.campo { min-width: 0; }
+.linha-dupla > label.campo:has(textarea) { display: flex; flex-direction: column; }
+.linha-dupla > label.campo textarea { flex: 1; }
+@media (max-width: 800px) {
+  .linha-dupla, .linha-form.linha-tres { grid-template-columns: 1fr; }
+}
 fieldset.secao { border: 0; padding: 0; margin: 0 0 1.4rem; }
 fieldset.secao > legend {
   font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .09em;

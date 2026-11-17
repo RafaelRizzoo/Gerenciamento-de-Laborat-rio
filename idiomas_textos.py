@@ -7,6 +7,13 @@ sistema. Para um texto novo, acrescente uma linha no mesmo formato.
 """
 
 TEXTOS: dict[str, dict[str, str]] = {
+    'Ficha com Dados de Segurança de Resíduos Químicos': {"en": 'Safety Data Sheet for Chemical Waste', "es": 'Ficha de Datos de Seguridad de Residuos Químicos'},
+    'Ficha com Dados de Segurança de Resíduos Químicos: o que é e qual norma a orienta.': {"en": 'Safety Data Sheet for Chemical Waste: what it is and which standard guides it.', "es": 'Ficha de Datos de Seguridad de Residuos Químicos: qué es y qué norma la orienta.'},
+    'Descrição da norma': {"en": 'Standard description', "es": 'Descripción de la norma'},
+    'A FDSR é um documento que apresenta informações sobre os riscos dos resíduos químicos, orientando sobre seu manuseio, armazenamento, transporte, medidas de segurança e procedimentos de emergência, visando à proteção da saúde humana e do meio ambiente.': {"en": 'The FDSR is a document that presents information on the hazards of chemical waste, providing guidance on its handling, storage, transport, safety measures and emergency procedures, aiming at the protection of human health and the environment.', "es": 'La FDSR es un documento que presenta información sobre los riesgos de los residuos químicos, orientando sobre su manejo, almacenamiento, transporte, medidas de seguridad y procedimientos de emergencia, con el fin de proteger la salud humana y el medio ambiente.'},
+    'Referência normativa: ': {"en": 'Normative reference: ', "es": 'Referencia normativa: '},
+    'Trecho de referência da norma: ': {"en": 'Excerpt from the standard: ', "es": 'Extracto de la norma: '},
+    'A FDSR deve apresentar informações sobre os perigos dos resíduos químicos e recomendações de segurança relacionadas ao transporte, manuseio, armazenamento e procedimentos de emergência.': {"en": 'The FDSR must present information on the hazards of chemical waste and safety recommendations related to transport, handling, storage and emergency procedures.', "es": 'La FDSR debe presentar información sobre los peligros de los residuos químicos y recomendaciones de seguridad relacionadas con el transporte, la manipulación, el almacenamiento y los procedimientos de emergencia.'},
     'Técnico de Segurança responsável': {"en": 'Responsible Safety technician', "es": 'Técnico de Seguridad responsable'},
     'Técnico de Segurança': {"en": 'Safety technician', "es": 'Técnico de Seguridad'},
     'Definido pela unidade e pela área escolhidas acima.': {"en": 'Set by the unit and area chosen above.', "es": 'Definido por la unidad y el área elegidas arriba.'},

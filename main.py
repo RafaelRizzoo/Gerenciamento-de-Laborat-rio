@@ -427,30 +427,36 @@ def get(req, erro: str = "", ok: str = ""):
             "/fds", "verde",
         ),
         ui.cartao_atalho(
+            ui.ICONES["fdsr"], "FDSR",
+            "Ficha com Dados de Segurança de Resíduos Químicos: o que é e qual "
+            "norma a orienta.",
+            "/fdsr", "azul",
+        ),
+        ui.cartao_atalho(
             ui.ICONES["nova"], "Cadastro",
             "Cadastre um novo produto químico anexando a FDS e inicie o fluxo de aprovação.",
-            "/solicitacoes/nova", "azul",
+            "/solicitacoes/nova", "verde",
         ),
         ui.cartao_atalho(
             ui.ICONES["kit"], "Kit Ambiental",
             "O que cada kit de contenção possui, para que serve e onde encontrar.",
-            "/kit-ambiental", "verde",
+            "/kit-ambiental", "azul",
         ),
         ui.cartao_atalho(
             ui.ICONES["controlados"], "Produtos Controlados",
             "Produtos sujeitos a controle da Polícia Federal e do Exército, com "
             "autorização e validade.",
-            "/produtos-controlados", "azul",
+            "/produtos-controlados", "verde",
         ),
         ui.cartao_atalho(
             ui.ICONES["recursos"], "Recursos e Documentos",
             "Procedimentos, formulários, normas externas e material de treinamento.",
-            "/recursos", "verde",
+            "/recursos", "azul",
         ),
         ui.cartao_atalho(
             ui.ICONES["aprovacoes"], "Aprovações",
             "Acompanhe o fluxo de aprovação e o status das solicitações.",
-            "/aprovacoes", "azul", etiqueta=None if usuario else "login",
+            "/aprovacoes", "verde", etiqueta=None if usuario else "login",
         ),
     ]
 
@@ -954,27 +960,26 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                          ajuda=auto("fabricante")),
                 cls="linha-form",
             ),
+            # CAS (campo alto) de um lado, tipo e estado físico empilhados do
+            # outro: as duas colunas ficam com a mesma altura, sem vão.
             Div(
                 ui.campo(
                     "Números CAS", "numero_cas",
-                    valor=dados.get("numero_cas", ""), linhas=3, obrigatório=True,
+                    valor=dados.get("numero_cas", ""), linhas=5, obrigatório=True,
                     placeholder="67-64-1",
                     ajuda="Um número por linha. "
                           + (auto("numero_cas") or "Ex.: 67-64-1"),
                 ),
-                cls="linha-form",
-            ),
-            Div(
-                ui.campo("Tipo de produto", "tipo_produto",
-                         valor=dados.get("tipo_produto", ""), opcoes=TIPOS_PRODUTO,
-                         obrigatório=True, ajuda=auto("tipo_produto")),
-                ui.campo("Categoria química", "categoria",
-                         valor=dados.get("categoria", ""), opcoes=CATEGORIAS,
-                         obrigatório=True),
-                ui.campo("Estado físico", "estado_fisico",
-                         valor=dados.get("estado_fisico", ""), opcoes=ESTADOS_FISICOS,
-                         obrigatório=True, ajuda=auto("estado_fisico")),
-                cls="linha-form",
+                Div(
+                    ui.campo("Tipo de produto", "tipo_produto",
+                             valor=dados.get("tipo_produto", ""), opcoes=TIPOS_PRODUTO,
+                             obrigatório=True, ajuda=auto("tipo_produto")),
+                    ui.campo("Estado físico", "estado_fisico",
+                             valor=dados.get("estado_fisico", ""), opcoes=ESTADOS_FISICOS,
+                             obrigatório=True, ajuda=auto("estado_fisico")),
+                    cls="coluna-form",
+                ),
+                cls="linha-dupla",
             ),
             cls="secao",
         ),
@@ -988,27 +993,33 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                 ui.campo("Área solicitante", "area_solicitante",
                          valor=dados.get("area_solicitante", ""),
                          grupos=AREAS_POR_UNIDADE, obrigatório=True,
-                         ajuda="Escolha uma área da unidade selecionada ao lado."),
-                cls="linha-form",
+                         ajuda="Escolha uma área da unidade selecionada."),
+                _campo_tecnico_seguranca(
+                    dados.get("unidade_solicitante", ""),
+                    dados.get("area_solicitante", ""),
+                    dados.get("tecnico_seguranca", ""),
+                ),
+                cls="linha-form linha-tres",
             ),
-            _campo_tecnico_seguranca(
-                dados.get("unidade_solicitante", ""),
-                dados.get("area_solicitante", ""),
-                dados.get("tecnico_seguranca", ""),
-            ),
-            ui.campo(
-                "Finalidade de uso", "aplicacao", valor=dados.get("aplicacao", ""),
-                linhas=3, obrigatório=True,
-                ajuda="Onde e como o produto será aplicado no processo.",
-            ),
-            ui.campo("Forma de aplicação", "forma_aplicacao",
-                     valor=dados.get("forma_aplicacao", ""),
-                     opcoes=FORMAS_APLICACAO, obrigatório=True,
-                     ajuda="Como o produto é aplicado no processo."),
             Div(
-                ui.campo("Prazo de utilização", "prazo_utilizacao",
-                         valor=dados.get("prazo_utilizacao", ""), obrigatório=True,
-                         opcoes=PRAZOS_UTILIZACAO),
+                ui.campo(
+                    "Finalidade de uso", "aplicacao", valor=dados.get("aplicacao", ""),
+                    linhas=5, obrigatório=True,
+                    ajuda="Onde e como o produto será aplicado no processo.",
+                ),
+                Div(
+                    ui.campo("Forma de aplicação", "forma_aplicacao",
+                             valor=dados.get("forma_aplicacao", ""),
+                             opcoes=FORMAS_APLICACAO, obrigatório=True,
+                             ajuda="Como o produto é aplicado no processo."),
+                    ui.campo("Prazo de utilização", "prazo_utilizacao",
+                             valor=dados.get("prazo_utilizacao", ""), obrigatório=True,
+                             opcoes=PRAZOS_UTILIZACAO),
+                    cls="coluna-form",
+                ),
+                cls="linha-dupla",
+            ),
+            Div(
                 ui.campo("Quantidade prevista", "consumo_estimado",
                          valor=dados.get("consumo_estimado", ""), obrigatório=True,
                          placeholder="Ex.: 200",
@@ -1016,7 +1027,7 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                 ui.campo("Unidade de medida", "unidade",
                          valor=dados.get("unidade", ""), obrigatório=True,
                          opcoes=UNIDADES_CONSUMO),
-                cls="linha-form",
+                cls="linha-dupla",
             ),
             # Funcionários expostos e função dos expostos saíram daqui: quem
             # avalia exposição ocupacional é a área de Saúde, no parecer.
@@ -1193,7 +1204,6 @@ async def post(req, sess):
         ("fabricante", "Nome do fabricante"),
         ("numero_cas", "Números CAS"),
         ("tipo_produto", "Tipo de produto"),
-        ("categoria", "Categoria química"),
         ("estado_fisico", "Estado físico"),
         ("area_solicitante", "Área solicitante"),
         ("aplicacao", "Finalidade de uso"),
@@ -2158,6 +2168,57 @@ def _tabela_pontos(agrupado: dict, mostrar_kit: bool = True, pode: bool = False)
             )
         )
     return Div(*blocos, cls="fabricas")
+
+
+@rt("/fdsr")
+def get(req, fabrica: str = ""):
+    """FDSR: filtro de unidade e a descrição da norma, só para consulta."""
+    usuario = eu(req)
+    if fabrica not in UNIDADES:
+        fabrica = ""
+
+    filtro = Form(
+        Div(
+            ui.campo("Unidade", "fabrica", valor=fabrica, opcoes=UNIDADES),
+            Div(
+                Button("Filtrar", cls="btn", type="submit"),
+                A("Limpar", href="/fdsr", cls="btn secundario"),
+                cls="acao",
+            ),
+            cls="filtros",
+        ),
+        method="get",
+        action="/fdsr",
+    )
+
+    return ui.pagina(
+        "FDSR",
+        Div(filtro, cls="card"),
+        Div(
+            Div(
+                H2("Descrição da norma"),
+                Span(f"Unidade: {fabrica}", cls="direita") if fabrica else None,
+                cls="card-titulo",
+            ),
+            P(
+                "A FDSR é um documento que apresenta informações sobre os riscos "
+                "dos resíduos químicos, orientando sobre seu manuseio, "
+                "armazenamento, transporte, medidas de segurança e procedimentos "
+                "de emergência, visando à proteção da saúde humana e do meio "
+                "ambiente."
+            ),
+            P(B("Referência normativa: "), "ABNT NBR 16725:2023."),
+            P(
+                B("Trecho de referência da norma: "),
+                "A FDSR deve apresentar informações sobre os perigos dos resíduos "
+                "químicos e recomendações de segurança relacionadas ao transporte, "
+                "manuseio, armazenamento e procedimentos de emergência.",
+            ),
+            cls="card",
+        ),
+        usuario=usuario,
+        subtitulo="Ficha com Dados de Segurança de Resíduos Químicos",
+    )
 
 
 @rt("/kit-ambiental")

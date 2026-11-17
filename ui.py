@@ -245,6 +245,12 @@ ICONES = {
         '<circle cx="10.8" cy="10.8" r="6.4"/>',
         '<path d="M15.6 15.6 21 21"/>',
     ),
+    "fdsr": _svg(
+        '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>',
+        '<path d="M14 3v5h5"/>',
+        '<text x="12" y="17.4" font-size="4.6" font-family="Segoe UI, Arial, sans-serif"'
+        ' font-weight="700" text-anchor="middle" stroke="none" fill="currentColor">FDSR</text>',
+    ),
     "kit": _svg(
         '<path d="M9.4 6.2V4.7A1.7 1.7 0 0 1 11.1 3h1.8a1.7 1.7 0 0 1 1.7 1.7v1.5"/>',
         '<rect x="3" y="6.2" width="18" height="14" rx="2"/>',
