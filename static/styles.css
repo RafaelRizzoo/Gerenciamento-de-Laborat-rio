@@ -592,11 +592,20 @@ fieldset.secao > legend {
 .atalhos {
   display: flex; flex-wrap: wrap; gap: 1.15rem; justify-content: center;
 }
-/* 4 por linha, e a última linha estica para ocupar a largura toda: com 7
-   cartões fica 4+3, sem sobra isolada nem vão (vale para qualquer quantidade). */
-.atalhos > .atalho { flex: 1 1 calc((100% - 3 * 1.15rem) / 4); min-width: 0; }
+/* Destaque + grade: os dois primeiros cartões (FDS e Cadastro) ocupam a
+   primeira linha, grandes; os demais dividem a linha de baixo. Com 7
+   cartões fecha 2+5, sem sobra. */
+.atalhos > .atalho { flex: 1 1 calc((100% - 4 * 1.15rem) / 5); min-width: 0; }
+.atalhos > .atalho:nth-child(-n+2) {
+  flex: 1 1 calc((100% - 1.15rem) / 2);
+  padding: 1.9rem 1.9rem 3rem;
+}
+.atalhos > .atalho:nth-child(-n+2) .atalho-icone { width: 64px; height: 64px; }
+.atalhos > .atalho:nth-child(-n+2) h3 { font-size: 1.35rem; }
+.atalhos > .atalho:nth-child(-n+2) p { font-size: .95rem; }
 @media (max-width: 1150px) {
   .atalhos > .atalho { flex: 1 1 calc((100% - 1.15rem) / 2); }
+  .atalhos > .atalho:nth-child(-n+2) { padding: 1.35rem 1.35rem 2.5rem; }
 }
 @media (max-width: 620px) {
   .atalhos > .atalho { flex: 1 1 100%; }
@@ -693,6 +702,7 @@ body > header, body > .faixa-usuario, body > .rodape-site {
 .semaforo.proxima  { color: var(--ambar); }
 .semaforo.vencida  { color: var(--vermelho); }
 .semaforo.sem-fds  { color: var(--cinza-medio); }
+.semaforo.aguardando { color: var(--cinza-medio); }
 .semaforo .ponto { background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 22%, transparent); }
 
 /* ---------------------------------------------- Painel de contagem */
@@ -762,6 +772,7 @@ body > header, body > .faixa-usuario, body > .rodape-site {
 .cartao-fds:has(.semaforo.proxima) { border-left-color: var(--ambar); }
 .cartao-fds:has(.semaforo.vencida) { border-left-color: var(--vermelho); }
 .cartao-fds:has(.semaforo.sem-fds) { border-left-color: var(--cinza-medio); }
+.cartao-fds:has(.semaforo.aguardando) { border-left-color: var(--cinza-medio); }
 
 /* =====================================================================
    Módulo de aprovações

@@ -619,10 +619,15 @@ def registrar_decisao(
         produto.status = "REPROVADO"
         produto.etapa_atual = None
         produto.concluido_em = datetime.now()
+        produto.em_renovacao = False
     elif etapa == ETAPA_FINAL:
         produto.status = "APROVADO"
         produto.etapa_atual = None
         produto.concluido_em = datetime.now()
+        # A validade (3 anos) começa a contar agora, na aprovação final.
+        produto.aprovado_em = produto.concluido_em
+        produto.em_renovacao = False
+        produto.aviso_vencimento_em = None
     else:
         produto.status = "EM_ANALISE"
         # Concluídas as áreas, a bola passa para o Aprovador Final.
@@ -805,7 +810,10 @@ def fabricantes_aprovados(sessao) -> list[str]:
     """Nomes dos fabricantes dos produtos aprovados, em ordem alfabética."""
     nomes = sessao.scalars(
         select(Produto.fabricante)
-        .where(Produto.status == "APROVADO", Produto.fabricante.is_not(None))
+        .where(
+            (Produto.status == "APROVADO") | (Produto.em_renovacao.is_(True)),
+            Produto.fabricante.is_not(None),
+        )
         .distinct()
     )
     return sorted({n.strip() for n in nomes if n and n.strip()}, key=str.casefold)
@@ -867,7 +875,10 @@ def buscar_produtos(
     if data_ate:
         consulta = consulta.where(Produto.criado_em <= datetime.combine(data_ate, time.max))
     if somente_aprovados:
-        consulta = consulta.where(Produto.status == "APROVADO")
+        # Em renovação, a aprovação anterior segue valendo para consulta.
+        consulta = consulta.where(
+            (Produto.status == "APROVADO") | (Produto.em_renovacao.is_(True))
+        )
     if somente_com_fds:
         consulta = consulta.where(Produto.documentos.any(Documento.tipo == "FDS"))
     consulta = consulta.order_by(Produto.atualizado_em.desc())
@@ -1293,6 +1304,107 @@ def enviar_lembretes(sessao, dias: int = DIAS_LEMBRETE) -> int:
             "LEMBRETE_ENVIADO",
             "Cobrança automática das áreas pendentes: "
             + (", ".join(produto.areas_pendentes_labels) or "-"),
+            None,
+            produto.id,
+        )
+        enviados += 1
+    sessao.flush()
+    return enviados
+
+
+# ------------------------------------------------- Validade e renovação
+PAPEIS_RENOVACAO = ("ADMIN", "APROVADOR_FINAL", "QUIMICO_RESPONSAVEL")
+
+
+def pode_renovar(usuario, produto: Produto) -> bool:
+    """Quem pode pedir a renovação: o solicitante, o gestor do contrato (pelo
+    e-mail) e quem administra produtos."""
+    if usuario is None:
+        return False
+    if usuario.papel in PAPEIS_RENOVACAO:
+        return True
+    if produto.solicitante_id == usuario.id:
+        return True
+    gestor = (produto.gestor_email or "").strip().lower()
+    return bool(gestor) and gestor == (usuario.email or "").strip().lower()
+
+
+def renovar_aprovacao(sessao, produto: Produto, usuario: Usuario) -> Produto:
+    """Manda o produto de volta para a aprovação, sem novo cadastro.
+
+    Nenhum campo muda: só as quatro áreas e o Aprovador Final precisam dar o
+    parecer de novo. Enquanto isso o produto continua consultável com a
+    aprovação anterior, e a nova validade (3 anos) conta da nova aprovação.
+    """
+    if not produto.pode_renovar:
+        raise ValueError(
+            "A renovação só abre quando faltam 6 meses ou menos para o "
+            "vencimento, ou depois de vencido."
+        )
+    if not pode_renovar(usuario, produto):
+        raise ValueError("Você não é responsável por este produto.")
+
+    for aprovacao in produto.aprovacoes:
+        aprovacao.decisao = "PENDENTE"
+        aprovacao.parecer = None
+        aprovacao.aprovador_id = None
+        aprovacao.decidido_em = None
+    produto.status = "PENDENTE"
+    produto.etapa_atual = None
+    produto.em_renovacao = True
+    produto.concluido_em = None
+    produto.pendencia = None
+    # O prazo de 7 dias para a primeira cobrança recomeça agora.
+    produto.ultimo_lembrete_em = datetime.now()
+    produto.atualizado_em = datetime.now()
+    sessao.flush()
+
+    registrar_log(
+        sessao,
+        "RENOVACAO_INICIADA",
+        f"Renovação da aprovação pedida por {usuario.nome}. As áreas analisam "
+        "de novo; a ficha do produto não foi alterada.",
+        usuario.id,
+        produto.id,
+        status_anterior="APROVADO",
+        status_novo="PENDENTE",
+    )
+    notificacoes.notificar_renovacao(sessao, produto, usuario)
+    return produto
+
+
+def produtos_a_vencer(sessao) -> list[Produto]:
+    """Aprovados que entraram na janela de 6 meses (ou já venceram) e ainda
+    não receberam o aviso desta aprovação."""
+    candidatos = sessao.scalars(
+        select(Produto).where(
+            Produto.status == "APROVADO",
+            (Produto.em_renovacao.is_(None)) | (Produto.em_renovacao.is_(False)),
+        )
+    ).unique()
+    pendentes = []
+    for p in candidatos:
+        if p.fds_situacao not in ("PROXIMA", "VENCIDA"):
+            continue
+        base = p.data_aprovacao
+        if p.aviso_vencimento_em and base and p.aviso_vencimento_em.date() >= base:
+            continue  # já avisado nesta aprovação
+        pendentes.append(p)
+    return pendentes
+
+
+def enviar_avisos_vencimento(sessao) -> int:
+    """E-mail para o responsável de cada produto que está a 6 meses (ou menos)
+    de vencer. Sai uma vez por aprovação. Retorna quantos foram avisados."""
+    enviados = 0
+    for produto in produtos_a_vencer(sessao):
+        notificacoes.notificar_vencimento(sessao, produto)
+        produto.aviso_vencimento_em = datetime.now()
+        registrar_log(
+            sessao,
+            "AVISO_VENCIMENTO",
+            f"Aviso de vencimento enviado ao responsável "
+            f"(vence em {produto.fds_vencimento.strftime('%d/%m/%Y')}).",
             None,
             produto.id,
         )

@@ -379,14 +379,18 @@ ORGAOS_CONTROLADORES = {
     "EXERCITO": "Exército Brasileiro",
 }
 
-# Validade da FDS: contada a partir da data de revisão do documento.
-FDS_VALIDADE_ANOS = 5
+# Validade do produto (FDS e FDSR): 3 anos contados da APROVAÇÃO dentro do
+# sistema, e não da data de revisão do PDF. O aviso de vencimento sai quando
+# faltam 6 meses. Para renovar, o produto passa de novo pela aprovação, sem
+# novo cadastro (ver servicos.renovar_aprovacao).
+FDS_VALIDADE_ANOS = 3
 FDS_ALERTA_MESES = 6
 
 SITUACOES_FDS = {
     "VIGENTE": "Vigente",
     "PROXIMA": "Próxima do vencimento",
     "VENCIDA": "Vencida",
+    "AGUARDANDO": "Aguardando aprovação",
     "SEM_FDS": "Sem FDS anexada",
 }
 
@@ -399,11 +403,14 @@ SITUACOES_FDS_TELA = {
     "VIGENTE": "Produtos Aprovados",
     "PROXIMA": "Produtos Pendentes",
     "VENCIDA": "Produtos Reprovados",
+    "AGUARDANDO": "Aguardando aprovação",
     "SEM_FDS": "Sem FDS anexada",
 }
 
 SITUACOES_FDS_FILTRO = {
-    chave: rotulo for chave, rotulo in SITUACOES_FDS_TELA.items() if chave != "SEM_FDS"
+    chave: rotulo
+    for chave, rotulo in SITUACOES_FDS_TELA.items()
+    if chave not in ("SEM_FDS", "AGUARDANDO")
 }
 
 
@@ -520,6 +527,13 @@ class Produto(Base):
     pendencia: Mapped[str | None] = mapped_column(UnicodeText, nullable=True)
     # Última vez que o sistema cobrou os aprovadores pendentes por e-mail.
     ultimo_lembrete_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Validade: a contagem dos 3 anos começa na aprovação final. Em renovação
+    # o produto volta ao fluxo de aprovação (status PENDENTE) mas continua
+    # consultável até vencer, e `aprovado_em` guarda a aprovação anterior.
+    aprovado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    em_renovacao: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+    # Quando o aviso de "faltam 6 meses" foi enviado (uma vez por aprovação).
+    aviso_vencimento_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     solicitante: Mapped["Usuario"] = relationship(
         lazy="joined", foreign_keys="Produto.solicitante_id"
@@ -751,9 +765,19 @@ class Produto(Base):
         return versoes[0] if versoes else None
 
     @property
+    def data_aprovacao(self) -> date | None:
+        """Quando a contagem da validade começou: a aprovação final dentro do
+        sistema. Em registros antigos, sem a data gravada, vale o fechamento."""
+        if self.aprovado_em:
+            return self.aprovado_em.date()
+        if self.status == "APROVADO" and self.concluido_em:
+            return self.concluido_em.date()
+        return None
+
+    @property
     def fds_vencimento(self) -> date | None:
-        doc = self.fds
-        return doc.vencimento if doc else None
+        base = self.data_aprovacao
+        return somar_meses(base, FDS_VALIDADE_ANOS * 12) if base else None
 
     @property
     def fds_dias_restantes(self) -> int | None:
@@ -762,16 +786,33 @@ class Produto(Base):
 
     @property
     def fds_situacao(self) -> str:
-        """VIGENTE | PROXIMA | VENCIDA | SEM_FDS"""
+        """VIGENTE | PROXIMA | VENCIDA | AGUARDANDO | SEM_FDS"""
+        if self.fds is None:
+            return "SEM_FDS"
         venc = self.fds_vencimento
         if venc is None:
-            return "SEM_FDS"
+            return "AGUARDANDO"
         hoje = date.today()
         if venc < hoje:
             return "VENCIDA"
         if venc <= somar_meses(hoje, FDS_ALERTA_MESES):
             return "PROXIMA"
         return "VIGENTE"
+
+    @property
+    def disponivel_publico(self) -> bool:
+        """Aparece na consulta aberta: aprovado, ou em renovação (a aprovação
+        anterior continua valendo para consulta enquanto a nova não sai)."""
+        return self.status == "APROVADO" or bool(self.em_renovacao)
+
+    @property
+    def pode_renovar(self) -> bool:
+        """A renovação abre quando faltam 6 meses ou menos, ou já venceu."""
+        return (
+            self.status == "APROVADO"
+            and not self.em_renovacao
+            and self.fds_situacao in ("PROXIMA", "VENCIDA")
+        )
 
     @property
     def fds_situacao_label(self) -> str:

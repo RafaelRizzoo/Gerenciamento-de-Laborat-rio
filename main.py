@@ -427,15 +427,15 @@ def get(req, erro: str = "", ok: str = ""):
             "/fds", "verde",
         ),
         ui.cartao_atalho(
+            ui.ICONES["nova"], "Cadastro",
+            "Cadastre um novo produto químico anexando a FDS e inicie o fluxo de aprovação.",
+            "/solicitacoes/nova", "azul",
+        ),
+        ui.cartao_atalho(
             ui.ICONES["fdsr"], "FDSR",
             "Ficha com Dados de Segurança de Resíduos Químicos: o que é e qual "
             "norma a orienta.",
-            "/fdsr", "azul",
-        ),
-        ui.cartao_atalho(
-            ui.ICONES["nova"], "Cadastro",
-            "Cadastre um novo produto químico anexando a FDS e inicie o fluxo de aprovação.",
-            "/solicitacoes/nova", "verde",
+            "/fdsr", "verde",
         ),
         ui.cartao_atalho(
             ui.ICONES["kit"], "Kit Ambiental",
@@ -1100,7 +1100,7 @@ def _formulario_solicitacao(usuario, token, nome_arquivo, dados, preenchidos,
                 ui.campo("Data de revisão da FDS", "data_revisao_fds", tipo="date",
                          valor=dados.get("data_revisao_fds", ""), obrigatório=True,
                          ajuda=auto("data_revisao_fds")
-                         or f"Consta na ficha. Vale por {FDS_VALIDADE_ANOS} anos."),
+                         or "Consta na ficha."),
                 cls="linha-form",
             ),
             ui.campo("Observações", "observacoes", valor=dados.get("observacoes", ""),
@@ -3796,7 +3796,7 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
                 ui.alerta("Registro inexistente.", "erro"),
                 usuario=usuario,
             )
-        if publico and not minha and produto.status != "APROVADO":
+        if publico and not minha and not produto.disponivel_publico:
             return ui.pagina(
                 "Produto não disponível para consulta pública",
                 ui.alerta(
@@ -3816,6 +3816,12 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
             [] if publico else servicos.areas_para_decidir(s, u_atual, produto)
         )
         pode = bool(areas_permitidas)
+        # Renovação: o responsável pelo produto manda de volta para a aprovação
+        # quando faltam 6 meses ou menos para vencer (ou já venceu).
+        pode_renovar = (
+            not publico and produto.pode_renovar
+            and servicos.pode_renovar(u_atual, produto)
+        )
         # Técnicos que podem assumir a Segurança (só o admin usa esta lista).
         tecnicos_troca = (
             servicos.aprovadores_da_area(s, "SEGURANCA")
@@ -4131,7 +4137,12 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
                     else Span("não informada", cls="texto-mudo"),
                     cls="nowrap",
                 ),
-                Td(d.vencimento.strftime("%d/%m/%Y"), cls="nowrap"),
+                Td(
+                    produto.fds_vencimento.strftime("%d/%m/%Y")
+                    if d.id == fds.id and produto.fds_vencimento
+                    else Span("-", cls="texto-mudo"),
+                    cls="nowrap",
+                ),
                 Td(A(d.nome_arquivo, href=f"/documentos/{d.id}"), cls="pequeno"),
                 Td(
                     Span("vigente", cls="badge aprovado")
@@ -4141,12 +4152,50 @@ def get(req, sess, pid: int, ok: str = "", erro: str = ""):
             )
             for d in produto.fds_versoes
         ]
+        venc_fds = produto.fds_vencimento
+        if produto.data_aprovacao and venc_fds:
+            resumo_validade = (
+                f"Aprovada em {produto.data_aprovacao.strftime('%d/%m/%Y')}. "
+                f"Validade de {FDS_VALIDADE_ANOS} anos: "
+                + (
+                    f"venceu em {venc_fds.strftime('%d/%m/%Y')}."
+                    if situacao == "VENCIDA"
+                    else f"vence em {venc_fds.strftime('%d/%m/%Y')}."
+                )
+            )
+        else:
+            resumo_validade = (
+                f"A validade de {FDS_VALIDADE_ANOS} anos começa a contar quando "
+                "o produto for aprovado."
+            )
+        bloco_renovacao = None
+        if produto.em_renovacao:
+            bloco_renovacao = ui.alerta(
+                "Renovação em andamento: as áreas estão analisando de novo. O "
+                "produto continua consultável com a aprovação atual até a "
+                "nova aprovação sair.",
+                "info",
+            )
+        elif pode_renovar:
+            bloco_renovacao = Form(
+                P(
+                    "Esta aprovação está perto de vencer. Para renovar, o "
+                    "produto passa pela aprovação de novo; não é preciso "
+                    "cadastrar nada outra vez.",
+                    cls="pequeno",
+                ),
+                Button("Renovar aprovação", cls="btn verde", type="submit"),
+                method="post",
+                action=f"/produtos/{produto.id}/renovar",
+            )
         cartao_fds = Div(
             Div(
                 H2("Ficha de Dados de Segurança"),
                 Span(_pontos_semaforo(situacao), cls="direita"),
                 cls="card-titulo",
             ),
+            P(resumo_validade, cls="pequeno texto-mudo"),
+            bloco_renovacao,
             Div(
                 Table(
                     Thead(Tr(Th("Versão"), Th("Revisão"), Th("Vence em"),
@@ -4761,6 +4810,28 @@ async def post(req, pid: int):
     return RedirectResponse(f"/produtos/{pid}?ok=Produto+reativado.", status_code=303)
 
 
+@rt("/produtos/{pid}/renovar")
+async def post(req, pid: int):
+    """Manda o produto de volta para a aprovação (validade perto de vencer)."""
+    barrado = exigir_login(req)
+    if barrado:
+        return barrado
+    usuario = eu(req)
+    with db_session() as s:
+        produto = s.get(Produto, pid)
+        if not produto:
+            return RedirectResponse("/produtos", status_code=303)
+        try:
+            servicos.renovar_aprovacao(s, produto, s.get(Usuario, usuario.id))
+        except ValueError as exc:
+            return RedirectResponse(_msg(f"/produtos/{pid}", "erro", str(exc)), status_code=303)
+    return RedirectResponse(
+        _msg(f"/produtos/{pid}", "ok",
+             "Renovação iniciada: as áreas foram avisadas e vão analisar de novo."),
+        status_code=303,
+    )
+
+
 @rt("/produtos/{pid}/documentos")
 async def post(req, pid: int):
     barrado = exigir_login(req)
@@ -4842,18 +4913,22 @@ def _cartao_fds(produto, publico: bool = False):
     docs = [fds] if fds else []
 
     if fds:
-        venc = fds.vencimento.strftime("%d/%m/%Y")
+        # A validade conta da aprovação no sistema (3 anos).
+        data_validade = produto.fds_vencimento
+        venc = data_validade.strftime("%d/%m/%Y") if data_validade else "-"
         dias = produto.fds_dias_restantes
-        if situacao == "VENCIDA":
+        if dias is None:
+            prazo = "validade começa na aprovação"
+        elif situacao == "VENCIDA":
             prazo = f"venceu em {venc} ({abs(dias)} dias atrás)"
         elif situacao == "PROXIMA":
             prazo = f"vence em {venc} (faltam {dias} dias)"
         else:
             prazo = f"válida até {venc}"
         revisao = (
-            f"revisão de {fds.data_revisao.strftime('%d/%m/%Y')}"
-            if fds.data_revisao
-            else f"anexada em {fds.enviado_em.strftime('%d/%m/%Y')}"
+            f"aprovada em {produto.data_aprovacao.strftime('%d/%m/%Y')}"
+            if produto.data_aprovacao
+            else "aguardando aprovação"
         )
         linha_prazo = Div(
             Span(f"v{fds.versao}", cls="chip versao"),
@@ -5044,7 +5119,7 @@ def get(req, did: int):
             return Response("Documento não encontrado", status_code=404)
         if publico and (
             doc.tipo not in ("FDS", "FICHA_EMERGENCIA")
-            or doc.produto.status != "APROVADO"
+            or not doc.produto.disponivel_publico
         ):
             return Response(
                 "Documento disponível apenas para usuários autenticados.", status_code=403
@@ -5306,8 +5381,11 @@ def _rotina_lembretes():
             try:
                 with db_session() as s:
                     enviados = servicos.enviar_lembretes(s, config.LEMBRETE_DIAS)
+                    avisados = servicos.enviar_avisos_vencimento(s)
                 if enviados:
                     print(f"[lembretes] {enviados} solicitação(ões) cobrada(s).")
+                if avisados:
+                    print(f"[lembretes] {avisados} aviso(s) de vencimento enviado(s).")
             except Exception as exc:  # pragma: no cover
                 print(f"[lembretes] falha ao verificar: {exc}")
             _time.sleep(12 * 60 * 60)

@@ -11,6 +11,7 @@ from email.message import EmailMessage
 
 import config
 from models import (
+    FDS_VALIDADE_ANOS,
     AREAS_APROVACAO,
     ETAPA_FINAL,
     FLUXO_APROVACAO,
@@ -228,6 +229,77 @@ def notificar_conclusao(sessao, produto: Produto):
         f"({produto.codigo_interno}) foi concluído com a situação: {produto.status_label}.\n\n"
         f"{bloco_epi}"
         f"Detalhes e pareceres: {_url_produto(produto)}\n\n"
+        f"-- {config.APP_EMPRESA} | {config.APP_NOME}"
+    )
+    notificar(sessao, produto.solicitante.email, assunto, corpo, produto.id)
+
+
+def _data_br(d) -> str:
+    return d.strftime("%d/%m/%Y") if d else "-"
+
+
+def notificar_vencimento(sessao, produto: Produto):
+    """Aviso de que a aprovação do produto está para vencer (faltam 6 meses
+    ou menos). Vai para o solicitante e, quando há, para o gestor do contrato,
+    explicando que o próximo passo é passar pela aprovação de novo."""
+    venc = produto.fds_vencimento
+    dias = produto.fds_dias_restantes
+    vencido = dias is not None and dias < 0
+    if vencido:
+        situacao = f"venceu em {_data_br(venc)} (há {abs(dias)} dia(s))"
+    else:
+        situacao = f"vence em {_data_br(venc)} (faltam {dias} dia(s))"
+
+    assunto = (
+        f"[Produtos Químicos] Aprovação {'vencida' if vencido else 'perto de vencer'}"
+        f" - {produto.nome_comercial}"
+    )
+
+    destinos: dict[str, str] = {}
+    if produto.solicitante and produto.solicitante.email:
+        destinos[produto.solicitante.email.strip().lower()] = produto.solicitante.nome
+    gestor = (produto.gestor_email or "").strip()
+    if gestor:
+        destinos.setdefault(gestor.lower(), produto.gestor_contrato or gestor)
+
+    for email, nome in destinos.items():
+        corpo = (
+            f"Olá {nome},\n\n"
+            f"A aprovação do produto abaixo {situacao}. A validade é de "
+            f"{FDS_VALIDADE_ANOS} anos, contados da aprovação no sistema.\n\n"
+            f"{_resumo_produto(produto)}"
+            f"Aprovado em: {_data_br(produto.data_aprovacao)}\n"
+            f"Vencimento:  {_data_br(venc)}\n\n"
+            f"O QUE FAZER:\n"
+            f"  1. Abra o produto no sistema: {_url_produto(produto)}\n"
+            f"  2. Clique em \"Renovar aprovação\". Não é preciso cadastrar o "
+            f"produto de novo nem alterar nenhum campo.\n"
+            f"  3. As áreas (Segurança, Meio Ambiente, Saúde e Químico "
+            f"Responsável) analisam de novo e, concluídas as quatro, o "
+            f"Aprovador Final fecha a aprovação. A nova validade passa a contar "
+            f"desse momento.\n\n"
+            f"Enquanto a renovação não for concluída, o produto continua "
+            f"consultável com a aprovação atual. Depois do vencimento, ele "
+            f"aparece como vencido.\n\n"
+            f"-- {config.APP_EMPRESA} | {config.APP_NOME}"
+        )
+        notificar(sessao, email, assunto, corpo, produto.id)
+
+
+def notificar_renovacao(sessao, produto: Produto, autor: Usuario):
+    """Renovação iniciada: chama as áreas de novo e avisa o solicitante."""
+    for area, _rotulo in AREAS_APROVACAO:
+        notificar_etapa_pendente(sessao, produto, area)
+    assunto = f"[Produtos Químicos] Renovação iniciada - {produto.nome_comercial}"
+    corpo = (
+        f"Olá {produto.solicitante.nome},\n\n"
+        f"{autor.nome} pediu a renovação da aprovação do produto "
+        f"{produto.nome_comercial} ({produto.codigo_interno}). As áreas vão "
+        f"analisar de novo, em paralelo; concluídas as quatro, o Aprovador "
+        f"Final fecha a aprovação.\n\n"
+        f"Enquanto isso o produto segue consultável com a aprovação atual "
+        f"(vence em {_data_br(produto.fds_vencimento)}).\n\n"
+        f"Acompanhe por aqui: {_url_produto(produto)}\n\n"
         f"-- {config.APP_EMPRESA} | {config.APP_NOME}"
     )
     notificar(sessao, produto.solicitante.email, assunto, corpo, produto.id)
